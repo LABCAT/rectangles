@@ -1,3 +1,5 @@
+import p5 from 'p5';
+
 /**
  * @fileoverview p5.randomColor.js
  * A p5-aware port of randomColor (original by David Merfield, CC0)

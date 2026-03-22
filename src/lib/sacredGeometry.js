@@ -1,3 +1,5 @@
+import p5 from 'p5';
+
 // Sacred Geometry Library
 // Shared functions for drawing sacred geometry patterns using p5.Polar
 /**

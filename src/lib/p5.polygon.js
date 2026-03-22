@@ -1,3 +1,5 @@
+import p5 from 'p5';
+
 // p5.polygon.js
 // A polygon drawing library for p5.js
 

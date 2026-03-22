@@ -1,6 +1,5 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
-import inject from '@rollup/plugin-inject';
 
 // https://astro.build/config
 export default defineConfig({
@@ -10,12 +9,6 @@ export default defineConfig({
   },
   base: '/',
   vite: {
-    plugins: [
-      inject({
-        p5: ['p5', 'default'],
-        exclude: /\.(css|scss|sass|less|styl)(\?.*)?$/,
-      }),
-    ],
     resolve: {
       alias: {
         '@sketches': '/src/sketches',
