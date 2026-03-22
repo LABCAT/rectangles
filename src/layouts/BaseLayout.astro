@@ -1,0 +1,25 @@
+---
+import '@styles/global.scss';
+
+const { title = 'Sketchbook', description = '' } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="manifest" href="manifest.json"/>
+    <link rel="icon" href="https://labcat.nz/favicon.ico" sizes="any"/>
+    <link rel="icon" type="image/svg+xml" href="https://labcat.nz/icon.svg"/>
+    <link rel="apple-touch-icon" href="https://labcat.nz/apple-touch-icon.png"/>
+    <link rel="dns-prefetch" href="//fonts.googleapis.com"/>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="true"/>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;800;900&amp;family=Teko:wght@700&amp;display=block" as="style" id="fonts">
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

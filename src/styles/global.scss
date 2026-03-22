@@ -1,0 +1,79 @@
+// Import normalize.css for consistent base styling
+@import "./variables";
+@import "./mixins/breakpoints";
+@import "normalize.css";
+
+$cursor-color: white;
+
+body {
+    overflow: hidden;
+    font-family: Orbitron,sans-serif;
+}
+
+.loading {
+    display: flex;
+    align-items: center;
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    background: var(--gradient-bg);
+    background-blend-mode: var(--gradient-blend-mode);
+    transform: rotate(-180deg);
+    transition: opacity 3s;
+    opacity: 1;
+
+    &--complete {
+        opacity: 0;
+    }
+
+    svg {
+        margin: auto;
+        width: 10rem;
+        height: 10rem;
+        background: transparent;
+        shape-rendering: auto;
+    }
+
+    path {
+        fill: none;
+        stroke: #ff0cb8;
+        transform: scale(0.8);
+        transform-origin: 50px 50px;
+    }
+}
+
+.p5Canvas,
+#defaultCanvas0 {
+    position: relative;
+    z-index: 1;
+    background: var(--canvas-complex-bg);
+    background-blend-mode: var(--canvas-complex-blend-mode);
+}
+
+.p5Canvas--cursor-play {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><polygon points='8,6 26,16 8,26' fill='#{$cursor-color}'/></svg>") 8 8, pointer;
+}
+
+.p5Canvas--cursor-pause {
+  cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect x='8' y='6' width='4' height='20' fill='#{$cursor-color}'/><rect x='20' y='6' width='4' height='20' fill='#{$cursor-color}'/></svg>") 8 8, pointer;
+}
+
+#play-icon {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 120px;
+    height: 120px;
+    fill: var(--play-icon-color);
+    visibility: hidden;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 1s;
+    cursor: pointer;
+
+    &.fade-in {
+        opacity: 1;
+        visibility: visible;
+        z-index: 2;
+    }
+}

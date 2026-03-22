@@ -1,0 +1,18 @@
+---
+import BaseLayout from '@layouts/BaseLayout.astro';
+import { getAllSketches } from '@/sketchMetadata.js';
+
+const sketches = getAllSketches();
+---
+
+<BaseLayout title="LABCATS Sketchbook" description="Creative Coding Experiments.">
+  <h1>LABCATS Sketchbook</h1>
+  <p>Creative Coding Experiments.</p>
+
+  <h2>Available Sketches</h2>
+  <ul>
+    {sketches.map(sketch => (
+      <li><a href={`/${sketch.id}`}>{sketch.title}</a></li>
+    ))}
+  </ul>
+</BaseLayout>

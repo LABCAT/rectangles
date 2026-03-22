@@ -1,0 +1,20 @@
+// Brand Colors
+:root {
+  --cyan: #0cdbf5;
+  --pink: #ff0cb8;
+  --white: #fff;
+  --black: #000;
+  --gradient-bg: linear-gradient(0deg,
+                rgba(0, 0, 0, 1) -8.35%,
+                rgba(29, 22, 87, 1) -5.1%,
+                rgba(51, 65, 174, 1) 28.53%,
+                rgba(59, 82, 208, 1) 43.72%,
+                rgba(53, 100, 213, 1) 51.31%,
+                rgba(37, 146, 225, 1) 67.59%,
+                rgba(12, 219, 245, 1) 89.28%,
+                rgba(0, 255, 255, 1) 100.13%);
+  --play-icon-color: white;
+  --canvas-bg: transparent;
+  --canvas-complex-bg: none;
+  --canvas-complex-blend-mode: normal;
+}

@@ -1,0 +1,33 @@
+{
+  "name": "rectangles",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "lint": "eslint . --ext .js,.astro",
+    "format": "prettier --write .",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@tonejs/midi": "^2.0.28",
+    "astro": "^6.0.8",
+    "jszip": "^3.10.1",
+    "normalize.css": "^8.0.1",
+    "p5": "^1.9.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@rollup/plugin-inject": "^5.0.5",
+    "eslint": "^10.1.0",
+    "globals": "^17.4.0",
+    "sass-embedded": "^1.98.0"
+  },
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"
+}

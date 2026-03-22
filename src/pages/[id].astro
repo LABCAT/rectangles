@@ -1,0 +1,34 @@
+---
+import SketchLayout from '@layouts/SketchLayout.astro';
+import { sketchMetadata } from '@/sketchMetadata.js';
+
+export async function getStaticPaths() {
+  return Object.keys(sketchMetadata).map(id => ({
+    params: { id },
+    props: { sketchInfo: sketchMetadata[id] },
+  }));
+}
+
+const { sketchInfo } = Astro.props;
+---
+
+<SketchLayout title={sketchInfo.title} description={sketchInfo.description} />
+
+<script>
+  const sketches = {
+    'number-1': () => import('/src/sketches/RectanglesNo1.js'),
+  };
+
+  const pathSegments = window.location.pathname.split('/');
+  const sketchId =
+    pathSegments[pathSegments.length - 1] ||
+    pathSegments[pathSegments.length - 2];
+
+  sketches[sketchId]?.()
+    .then(module => {
+      console.log('Sketch loaded successfully!', module);
+    })
+    .catch(err => {
+      console.error('Failed to load sketch:', err);
+    });
+</script>
