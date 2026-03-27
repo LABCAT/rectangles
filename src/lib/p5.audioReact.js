@@ -1,35 +1,52 @@
 import p5 from 'p5';
+import dom from 'p5/dom';
 import { Midi } from '@tonejs/midi';
 
-const prevGlobalP5 = globalThis.p5;
-globalThis.p5 = p5;
-await import('p5.sound');
-if (prevGlobalP5 === undefined) {
-  delete globalThis.p5;
-} else {
-  globalThis.p5 = prevGlobalP5;
-}
+dom(p5);
 
-p5.prototype.loadSong = function (audioUrl, midiUrl, callback) {
-  this.song = this.loadSound(audioUrl, (sound) => {
-    this.audioSampleRate = sound.sampleRate();
-    this.totalAnimationFrames = Math.floor(sound.duration() * 60);
-    this.loadMidi(midiUrl, callback);
-  });
-  this.song.onended(() => {
-    this.songHasFinished = true;
-    if (this.canvas) {
-      this.canvas.classList.add('p5Canvas--cursor-play');
-      this.canvas.classList.remove('p5Canvas--cursor-pause');
-    }
-    if (this.captureEnabled && this.captureInProgress) {
-      this.captureInProgress = false;
-      this.downloadFrames?.();
-    }
-  });
+p5.prototype.loadSong = async function (audioUrl, midiUrl, callback) {
+  try {
+    await new Promise((resolve, reject) => {
+      this.song = this.createAudio(audioUrl, () => resolve());
+      this.song.elt.addEventListener(
+        'error',
+        () => reject(new Error(`Failed to load audio: ${audioUrl}`)),
+        { once: true }
+      );
+    });
+    this.song.hide();
+    this.audioSampleRate = 44100;
+    this.totalAnimationFrames = Math.floor((this.song.duration() || 0) * 60);
+
+    this.song.elt.onended = () => {
+      this.songHasFinished = true;
+      if (this.canvas) {
+        this.canvas.classList.add('p5Canvas--cursor-play');
+        this.canvas.classList.remove('p5Canvas--cursor-pause');
+      }
+      if (this.captureEnabled && this.captureInProgress) {
+        this.captureInProgress = false;
+        this.downloadFrames?.();
+      }
+    };
+
+    const midiData = await this.loadMidi(midiUrl);
+    callback?.(midiData);
+    this.hideLoader();
+    return midiData;
+  } catch (error) {
+    console.error('Failed to load song or MIDI:', error);
+    this.hideLoader();
+    return null;
+  }
 };
 
 p5.prototype.scheduleCueSet = function (noteSet, callbackName, polyMode = false) {
+  const fn = this[callbackName];
+  if (typeof fn !== 'function') {
+    console.error(`scheduleCueSet: missing handler "${callbackName}"`);
+    return;
+  }
   let lastTicks = -1;
   let currentCue = 1;
   for (let i = 0; i < noteSet.length; i++) {
@@ -37,19 +54,18 @@ p5.prototype.scheduleCueSet = function (noteSet, callbackName, polyMode = false)
     const { ticks, time } = note;
     if (ticks !== lastTicks || polyMode) {
       note.currentCue = currentCue;
-      this.song.addCue(time, this[callbackName], note);
+      const cueTime = time <= 0 ? 1e-6 : time;
+      this.song.addCue(cueTime, (val) => fn.call(this, val), note);
       lastTicks = ticks;
       currentCue++;
     }
   }
 };
 
-p5.prototype.loadMidi = function (midiUrl, callback) {
-  Midi.fromUrl(midiUrl).then((result) => {
-    console.log('MIDI loaded:', result);
-    callback(result);
-    this.hideLoader();
-  });
+p5.prototype.loadMidi = async function (midiUrl) {
+  const result = await Midi.fromUrl(midiUrl);
+  console.log('MIDI loaded:', result);
+  return result;
 };
 
 p5.prototype.hideLoader = function () {
@@ -61,20 +77,20 @@ p5.prototype.hideLoader = function () {
 };
 
 p5.prototype.togglePlayback = function () {
-  if (this.audioLoaded) {
+  if (this.audioLoaded && this.song) {
     if (this.captureEnabled) {
       this.startCapture();
       return;
     }
-    if (this.song.isPlaying()) {
+    const el = this.song.elt;
+    if (!el.paused) {
       this.song.pause();
       this.canvas.classList.add('p5Canvas--cursor-play');
       this.canvas.classList.remove('p5Canvas--cursor-pause');
     } else {
-      if (
-        parseInt(this.song.currentTime(), 10) >=
-        parseInt(this.song.buffer.duration, 10)
-      ) {
+      const currentTime = this.song.time();
+      const duration = this.song.duration();
+      if (currentTime >= duration && duration > 0) {
         this.resetAnimation?.();
       }
       const playIcon = document.getElementById('play-icon');
