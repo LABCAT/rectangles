@@ -1,6 +1,7 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
 import ColorGenerator from '@lib/p5.colorGenerator.js';
+import { getFullWindowGradientCss } from '@lib/p5.circlesStyleFullWindowGradient.js';
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
@@ -15,6 +16,14 @@ const RECT_WAVE_SMOOTH_R = 6;
 /** DonutsNo2-style layered glow: ADD + thick core + thin echoes. */
 const DONUTS_GLOW_CENTER_LAYER = 3;
 const DONUTS_GLOW_LAYER_ORDER = [0, 1, 2, 4, 5, 6, 3];
+
+/** Concentric rectangular rings from canvas center (CirclesNo9-style stack, axis-aligned); opacity = progress^exp. */
+const FADE_RING_COUNT = 22;
+const FADE_MAX_OPACITY = 1.05;
+const FADE_INNER_FIRST_ALPHA_SCALE = 0.48;
+const FADE_LAYER_FLOOR = 0.28;
+const FADE_LAYER_RANGE = 0.48;
+const FADE_OPACITY_EXP = 0.75;
 
 const RECT_OUTLINE_EDGES = [
   { ax: -1, ay: -1, bx: 1, by: -1, nx: 0, ny: -1 },
@@ -112,9 +121,96 @@ const drawFftRectOutline = (p, waveSm, wlen, cx, cy, halfSide, baseColor) => {
   p.pop();
 };
 
+const applyBgGradient = (p) => {
+  if (!p.bgGradientEl) return;
+  const { background, backgroundBlendMode } = getFullWindowGradientCss(p);
+  p.bgGradientEl.style.background = background;
+  p.bgGradientEl.style.backgroundBlendMode = backgroundBlendMode;
+};
+
+/** Axis-aligned frame between inner and outer half-extents from (cx, cy). */
+const drawFilledRectRing = (p, cx, cy, iw, ih, ow, oh) => {
+  if (ow <= iw || oh <= ih) return;
+  const oL = cx - ow;
+  const oT = cy - oh;
+  const oR = cx + ow;
+  const oB = cy + oh;
+  const iL = cx - iw;
+  const iT = cy - ih;
+  const iR = cx + iw;
+  const iB = cy + ih;
+
+  p.rectMode(p.CORNERS);
+  const topH = iT - oT;
+  if (topH > 0) p.rect(oL, oT, oR, iT);
+  const botH = oB - iB;
+  if (botH > 0) p.rect(oL, iB, oR, oB);
+  const midH = iB - iT;
+  const leftW = iL - oL;
+  if (midH > 0 && leftW > 0) p.rect(oL, iT, iL, iB);
+  const rightW = oR - iR;
+  if (midH > 0 && rightW > 0) p.rect(iR, iT, oR, iB);
+  p.rectMode(p.CORNER);
+};
+
+/** Stacked rings from center to viewport edge; outer rings darker (lighter center). */
+const drawBlackFadeRectStack = (p, opacity) => {
+  const w = p.width;
+  const h = p.height;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const maxHw = w * 0.5;
+  const maxHh = h * 0.5;
+  const count = FADE_RING_COUNT;
+  const innerFirst = false;
+  const overlap = 0.05 / count;
+
+  p.push();
+  p.colorMode(p.RGB, 255);
+  p.noStroke();
+  for (let i = 0; i < count; i++) {
+    const t0 = i / count;
+    const t1 = Math.min(1, (i + 1) / count + overlap);
+    const iw = t0 * maxHw;
+    const ih = t0 * maxHh;
+    const ow = t1 * maxHw;
+    const oh = t1 * maxHh;
+
+    const radialT = i / Math.max(1, count - 1);
+    const layerT = innerFirst ? 1 - radialT : radialT;
+    const a = p.constrain(
+      opacity *
+        FADE_MAX_OPACITY *
+        (FADE_LAYER_FLOOR + FADE_LAYER_RANGE * layerT) *
+        (innerFirst ? FADE_INNER_FIRST_ALPHA_SCALE : 1),
+      0,
+      1
+    );
+    p.fill(0, 0, 0, a * 255);
+    drawFilledRectRing(p, cx, cy, iw, ih, ow, oh);
+  }
+  p.pop();
+};
+
+const drawBlackFadeRects = (p) => {
+  const tPlay = p.getSongPlaybackTime();
+  if (!Number.isFinite(tPlay)) return;
+
+  let progress = 0;
+  if (p.blackFade?.durationSec > 0) {
+    const elapsed = (tPlay - p.blackFade.startSec) * 1000;
+    progress = p.constrain(elapsed / (p.blackFade.durationSec * 1000), 0, 1);
+  }
+
+  drawBlackFadeRectStack(p, progress ** FADE_OPACITY_EXP);
+};
+
 const sketch = (p) => {
   p.fft = null;
   p.fftRectColors = null;
+  p.bgGradientEl = null;
+  p.introBlackCover = true;
+  p.blackFade = { startSec: 0, durationSec: 0 };
 
   p.onTrack2Cue = function (note) {
     const durationSec = Math.max(
@@ -125,7 +221,6 @@ const sketch = (p) => {
           : 0.22)
     ) * 1.4;
 
-    console.log(note.midi);
     
 
     if (note.midi === 36 || note.midi === 37) {
@@ -134,20 +229,48 @@ const sketch = (p) => {
     }
   };
 
+  p.onTrack1Cue = function (note) {
+    p.introBlackCover = false;
+    const durationSec = Math.max(
+      0.04,
+      note.duration ??
+        (note.durationTicks && p.midiPpq
+          ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
+          : 0.5)
+    );
+    const t = p.getSongPlaybackTime();
+    if (Number.isFinite(t)) {
+      p.blackFade = { startSec: t, durationSec };
+    }
+    applyBgGradient(this);
+  };
+
   p.setup = async () => {
     p.pixelDensity(1);
     p.createCanvas(window.innerWidth, window.innerHeight);
+    p.clear();
     p.angleMode(p.DEGREES);
     p.colorMode(p.HSB, 360, 100, 100, 1);
     p.canvas.style.position = 'relative';
     p.canvas.style.zIndex = '1';
+    p.canvas.style.background = 'transparent';
+
+    const bgWrap = document.createElement('div');
+    bgWrap.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;';
+    p.bgGradientEl = document.createElement('div');
+    p.bgGradientEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+    bgWrap.appendChild(p.bgGradientEl);
+    document.body.insertBefore(bgWrap, document.body.firstChild);
+    p.randomSeed(Date.now());
+    applyBgGradient(p);
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
-      p.midiBpm = data.header.tempos[0]?.bpm ?? 120;
+      p.midiBpm = 143;
     });
 
     p.scheduleCueSet(midiData.tracks[2].notes, 'onTrack2Cue', true);
+    p.scheduleCueSet(midiData.tracks[1].notes, 'onTrack1Cue');
 
     const baseHue = Math.random() * 360;
     const colorGen = new ColorGenerator(p, p.color(baseHue, 92, 94));
@@ -159,11 +282,21 @@ const sketch = (p) => {
       p.song.connect(p.fft);
       p.fft.gain.toDestination();
     }
+
+    p.introBlackCover = true;
   };
 
   p.draw = () => {
-    if (!p.fft || !p.song?.isPlaying?.()) return;
-    p.background(0, 0, 5);
+    if (!p.fft) return;
+
+    p.clear();
+
+    if (p.introBlackCover) {
+      drawBlackFadeRectStack(p, 1);
+      return;
+    }
+
+    drawBlackFadeRects(p);
 
     p.fft.analyze();
     const wave = p.fft.waveform();
@@ -202,8 +335,8 @@ const sketch = (p) => {
       [xR, yB],
     ];
     for (let i = 0; i < 4; i++) {
-      const [cx, cy] = spots[i];
-      drawFftRectOutline(p, waveSm, wlen, cx, cy, halfSide, p.fftRectColors[i]);
+      const [rx, ry] = spots[i];
+      drawFftRectOutline(p, waveSm, wlen, rx, ry, halfSide, p.fftRectColors[i]);
     }
   };
 
