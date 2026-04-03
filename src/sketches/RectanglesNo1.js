@@ -409,7 +409,7 @@ const sketch = (p) => {
     }
   };
 
-  p.mousePressed = () => {
+  p.mouseClicked = () => {
     p.togglePlayback();
   };
 
