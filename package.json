@@ -17,7 +17,8 @@
     "astro": "^6.0.8",
     "jszip": "^3.10.1",
     "normalize.css": "^8.0.1",
-    "p5": "^2.2.3"
+    "p5": "^2.2.3",
+    "p5.sound": "^0.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

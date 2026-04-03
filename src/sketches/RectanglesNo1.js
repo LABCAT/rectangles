@@ -1,286 +1,420 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
-import { drawRectTubeFrame } from '@lib/p5.rectTubeFrame.js';
+import ColorGenerator from '@lib/p5.colorGenerator.js';
+import { getFullWindowGradientCss } from '@lib/p5.circlesStyleFullWindowGradient.js';
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
 const midiUrl = base + 'audio/RectanglesNo1.mid';
 
-const NOTES_PER_PHRASE = 26;
-const TRACK2_KICK_NOTE = 36;
-const TRACK2_SNARE_NOTE = 37;
-const DEPTH_PUSH = 1;
-const CAMERA_RADIUS_MULT = 11.1;
+const SQUARE_WAVE_STEPS = 240;
+/** >1 nudges the 2×2 apart; ~1.06–1.12 keeps overlap without full edge contact. */
+const FFT_RECT_GAP_MUL = 1.08;
+/** Box-sample radius on waveform (reduces scratchy edge jitter). */
+const RECT_WAVE_SMOOTH_R = 6;
+/** Long track-3 notes: half-side starts at 0 and adds pixels per frame only while the MIDI gate is open. */
+const FFT_RECT_LONG_NOTE_TICKS = 50000;
+/** Minimum half-side growth per frame; at ~1900×1000 canvas area the effective rate matches this value. */
+const FFT_RECT_HALF_SIDE_GROW_PX = 8;
+const FFT_RECT_HALF_SIDE_GROW_REF_AREA = 1900 * 1000;
 
-/** Set false after you map kick/snare from [Track2 Redrum] logs */
-const LOG_TRACK2_MIDI_DISCOVERY = false;
+const fftRectHalfSideGrowPxPerFrame = (p) => {
+  const area = Math.max(1, p.width * p.height);
+  const scale = Math.sqrt(area / FFT_RECT_HALF_SIDE_GROW_REF_AREA);
+  return FFT_RECT_HALF_SIDE_GROW_PX * Math.max(1, scale);
+};
+/** Track 3: open all four FFT gates when `currentCue` exceeds this (see `onTrack3Cue`). */
+const FFT_RECT_ALL_FOUR_AFTER_CUE = 155;
 
-const easeOutCubic = (t) => 1 - (1 - t) ** 3;
+const noteDurationSec = (p, note, fallbackSec) =>
+  Math.max(
+    0.02,
+    note.duration ??
+      (note.durationTicks && p.midiPpq
+        ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
+        : fallbackSec)
+  );
+
+const mergeFftGate = (p, idx, s, e) => {
+  const curE = p.fftRectGateEndSec[idx];
+  if (curE <= 0 || s >= curE - 1e-4) {
+    p.fftRectGateStartSec[idx] = s;
+    p.fftRectGateEndSec[idx] = e;
+  } else {
+    p.fftRectGateEndSec[idx] = Math.max(curE, e);
+  }
+};
+
+/** DonutsNo2-style layered glow: ADD + thick core + thin echoes. */
+const DONUTS_GLOW_CENTER_LAYER = 3;
+const DONUTS_GLOW_LAYER_ORDER = [0, 1, 2, 4, 5, 6, 3];
+
+/** Concentric rectangular rings from canvas center (CirclesNo9-style stack, axis-aligned); opacity = progress^exp. */
+const FADE_RING_COUNT = 22;
+const FADE_MAX_OPACITY = 1.05;
+const FADE_INNER_FIRST_ALPHA_SCALE = 0.48;
+const FADE_LAYER_FLOOR = 0.28;
+const FADE_LAYER_RANGE = 0.48;
+/** Lower bound of the stack during an active track-1 fade segment only (else level stays 1). */
+const FADE_BASE_STACK_OPACITY = 0.22;
+const FADE_OPACITY_EXP = 0.75;
+
+const RECT_OUTLINE_EDGES = [
+  { ax: -1, ay: -1, bx: 1, by: -1, nx: 0, ny: -1 },
+  { ax: 1, ay: -1, bx: 1, by: 1, nx: 1, ny: 0 },
+  { ax: 1, ay: 1, bx: -1, by: 1, nx: 0, ny: 1 },
+  { ax: -1, ay: 1, bx: -1, by: -1, nx: -1, ny: 0 },
+];
+
+const normalize2 = (x, y) => {
+  const len = Math.hypot(x, y) || 1;
+  return { nx: x / len, ny: y / len };
+};
+
+/** Outward bisector at corners so each corner is one sample (avoids octagon chamfer). */
+const rectOutlineNormal = (edgeIdx, t, isFullEdge) => {
+  const e = RECT_OUTLINE_EDGES[edgeIdx];
+  const prev = RECT_OUTLINE_EDGES[(edgeIdx + 3) % 4];
+  const next = RECT_OUTLINE_EDGES[(edgeIdx + 1) % 4];
+  if (isFullEdge) {
+    if (t <= 0) return normalize2(prev.nx + e.nx, prev.ny + e.ny);
+    if (t >= 1) return normalize2(e.nx + next.nx, e.ny + next.ny);
+    return { nx: e.nx, ny: e.ny };
+  }
+  if (t >= 1) return normalize2(e.nx + next.nx, e.ny + next.ny);
+  return { nx: e.nx, ny: e.ny };
+};
+
+const drawFftRectOutline = (p, waveSm, wlen, cx, cy, halfSide, baseColor) => {
+  const rMax = halfSide * (0.36 / 0.22);
+  const rMin = halfSide * (0.1 / 0.22);
+  const stepsPerEdge = SQUARE_WAVE_STEPS / RECT_OUTLINE_EDGES.length;
+  const perimeterPts = stepsPerEdge + (RECT_OUTLINE_EDGES.length - 1) * (stepsPerEdge - 1);
+  const centerLayer = DONUTS_GLOW_CENTER_LAYER;
+  const layerOrder = DONUTS_GLOW_LAYER_ORDER;
+  const h0 = p.hue(baseColor);
+  const s0 = p.saturation(baseColor);
+  const b0 = p.brightness(baseColor);
+
+  p.push();
+  p.translate(cx, cy);
+  p.blendMode(p.ADD);
+  p.noFill();
+  p.strokeCap(p.SQUARE);
+
+  for (const geomScale of [1, 0.5]) {
+    const L = halfSide * geomScale;
+    for (const layer of layerOrder) {
+      const distFromCenter = Math.abs(layer - centerLayer);
+      const alpha = p.map(distFromCenter, 0, centerLayer, 0.8, 0.15);
+      p.strokeWeight((layer === centerLayer ? 32 : 3) * geomScale);
+      p.stroke((h0 + layer * 6) % 360, s0, b0, alpha);
+      const layerOffset = (layer - centerLayer) * 2.2 * geomScale;
+
+      let fx;
+      let fy;
+      let px0;
+      let py0;
+      let idx = 0;
+      for (let e = 0; e < RECT_OUTLINE_EDGES.length; e++) {
+        const { ax, ay, bx, by } = RECT_OUTLINE_EDGES[e];
+        const full = e === 0;
+        const sMax = full ? stepsPerEdge : stepsPerEdge - 1;
+        for (let s = 0; s < sMax; s++) {
+          const t = full ? s / (stepsPerEdge - 1) : (s + 1) / (stepsPerEdge - 1);
+          const px = p.lerp(ax, bx, t);
+          const py = p.lerp(ay, by, t);
+          const atCorner =
+            (e === 0 && (s === 0 || s === stepsPerEdge - 1)) || (e > 0 && s === sMax - 1);
+          const { nx: nnx, ny: nny } = rectOutlineNormal(e, t, full);
+          const wi = p.floor(p.map(idx, 0, perimeterPts - 1, 0, wlen - 1));
+          idx++;
+          const wv = waveSm[wi] ?? 0;
+          const env = p.constrain(Math.abs(wv), 0, 1);
+          const waveDisp = atCorner ? 0 : p.map(env, 0, 1, rMin * 0.12, rMax) * geomScale;
+          const totalDisp = waveDisp + layerOffset;
+          const x = px * L + nnx * totalDisp;
+          const y = py * L + nny * totalDisp;
+          if (idx === 1) {
+            fx = x;
+            fy = y;
+            px0 = x;
+            py0 = y;
+          } else {
+            p.line(px0, py0, x, y);
+            px0 = x;
+            py0 = y;
+          }
+        }
+      }
+      p.line(px0, py0, fx, fy);
+    }
+  }
+
+  p.blendMode(p.BLEND);
+  p.pop();
+};
+
+const applyBgGradient = (p) => {
+  if (!p.bgGradientEl) return;
+  const { background, backgroundBlendMode } = getFullWindowGradientCss(p);
+  p.bgGradientEl.style.background = background;
+  p.bgGradientEl.style.backgroundBlendMode = backgroundBlendMode;
+};
+
+/** Axis-aligned frame between inner and outer half-extents from (cx, cy). */
+const drawFilledRectRing = (p, cx, cy, iw, ih, ow, oh) => {
+  if (ow <= iw || oh <= ih) return;
+  const oL = cx - ow;
+  const oT = cy - oh;
+  const oR = cx + ow;
+  const oB = cy + oh;
+  const iL = cx - iw;
+  const iT = cy - ih;
+  const iR = cx + iw;
+  const iB = cy + ih;
+
+  p.rectMode(p.CORNERS);
+  const topH = iT - oT;
+  if (topH > 0) p.rect(oL, oT, oR, iT);
+  const botH = oB - iB;
+  if (botH > 0) p.rect(oL, iB, oR, oB);
+  const midH = iB - iT;
+  const leftW = iL - oL;
+  if (midH > 0 && leftW > 0) p.rect(oL, iT, iL, iB);
+  const rightW = oR - iR;
+  if (midH > 0 && rightW > 0) p.rect(iR, iT, oR, iB);
+  p.rectMode(p.CORNER);
+};
+
+/** Stacked rings from center to viewport edge; outer rings darker (lighter center). */
+const drawBlackFadeRectStack = (p, opacity) => {
+  const w = p.width;
+  const h = p.height;
+  const cx = w * 0.5;
+  const cy = h * 0.5;
+  const maxHw = w * 0.5;
+  const maxHh = h * 0.5;
+  const count = FADE_RING_COUNT;
+  const innerFirst = false;
+  const overlap = 0.05 / count;
+
+  p.push();
+  p.colorMode(p.RGB, 255);
+  p.noStroke();
+  for (let i = 0; i < count; i++) {
+    const t0 = i / count;
+    const t1 = Math.min(1, (i + 1) / count + overlap);
+    const iw = t0 * maxHw;
+    const ih = t0 * maxHh;
+    const ow = t1 * maxHw;
+    const oh = t1 * maxHh;
+
+    const radialT = i / Math.max(1, count - 1);
+    const layerT = innerFirst ? 1 - radialT : radialT;
+    const a = p.constrain(
+      opacity *
+        FADE_MAX_OPACITY *
+        (FADE_LAYER_FLOOR + FADE_LAYER_RANGE * layerT) *
+        (innerFirst ? FADE_INNER_FIRST_ALPHA_SCALE : 1),
+      0,
+      1
+    );
+    p.fill(0, 0, 0, a * 255);
+    drawFilledRectRing(p, cx, cy, iw, ih, ow, oh);
+  }
+  p.pop();
+};
+
+const drawBlackFadeRects = (p) => {
+  const tPlay = p.getSongPlaybackTime();
+  let level = 1;
+  const dur = p.blackFade?.durationSec ?? 0;
+  if (Number.isFinite(tPlay) && dur > 0) {
+    const t0 = p.blackFade.startSec;
+    const t1 = t0 + dur;
+    if (tPlay >= t0 && tPlay < t1) {
+      const progress = p.constrain((tPlay - t0) / dur, 0, 1);
+      const pulse = progress ** FADE_OPACITY_EXP;
+      level = FADE_BASE_STACK_OPACITY + (1 - FADE_BASE_STACK_OPACITY) * pulse;
+    }
+  }
+
+  drawBlackFadeRectStack(p, level);
+};
 
 const sketch = (p) => {
-  p.midiFrames = [];
-  p.depthAnim = null;
-  p.pendingPhraseClear = false;
-  p.pendingFirstFrame = null;
-  p.track2BaseHue = 0;
-  p.track2HueCurrent = 0;
-  p.track2HueTarget = 0;
-  p.track2Pulse = 0;
-  p.phraseSpans = [];
-  p.cameraAngle = 0;
-  p.cameraAngleTarget = 0;
+  p.fft = null;
+  p.fftRectColors = null;
+  p.bgGradientEl = null;
+  p.blackFade = { startSec: 0, durationSec: 0 };
+  p.fftRectGateStartSec = [0, 0, 0, 0];
+  p.fftRectGateEndSec = [0, 0, 0, 0];
+  p.fftRectGrowHalfSide = [null, null, null, null];
+  p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
 
-  const buildRandomFrame = () => {
-    const w = p.random(65, 220) * 24;
-    const h = p.random(45, 200) * 24;
-    const tube = p.constrain(p.random(2.8, Math.min(w, h) * 0.2), 2.5, 16);
-    const xMax = p.width * 4;
-    const yMax = p.height * 4;
-    const zSpan = p.max(p.width, p.height) * 6 * DEPTH_PUSH;
-    return {
-      x: p.random(-xMax, xMax),
-      y: p.random(-yMax, yMax),
-      z: p.random(-zSpan * 0.5, zSpan * 0.5),
-      rx: p.random(p.TWO_PI),
-      ry: p.random(p.TWO_PI),
-      rz: p.random(p.TWO_PI),
-      w,
-      h,
-      tube,
-      hue: p.random(360),
-    };
-  };
+  p.onTrack11Cue = function (note) {
+    const s = note.time;
+    const e = s + noteDurationSec(p, note, 0.22);
+    const longNote = (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS;
 
-  p.onTrack2Cue = function (note) {
-    if (LOG_TRACK2_MIDI_DISCOVERY) {
-      console.log('[Track2 Redrum]', {
-        cue: note.currentCue,
-        midi: note.midi,
-        velocity: note.velocity,
-        timeSec: note.time,
-        ticks: note.ticks,
-      });
-    }
-
-    if (note.midi === TRACK2_KICK_NOTE) {
-      p.track2BaseHue = p.random(360);
-      p.track2HueTarget = p.track2BaseHue;
-      p.track2Pulse = p.max(p.track2Pulse, 0.85);
-      return;
-    }
-
-    if (note.midi === TRACK2_SNARE_NOTE) {
-      p.track2HueTarget = (p.track2BaseHue + 180) % 360;
-      p.track2Pulse = p.max(p.track2Pulse, 0.65);
-    }
-  };
-
-  p.onTrack3Cue = function (note) {
-    const isPhraseEnd =
-      note.currentCue > 0 &&
-      note.currentCue % NOTES_PER_PHRASE === NOTES_PER_PHRASE - 1;
-    if (isPhraseEnd) {
-      const durationSec = Math.max(
-        0.04,
-        note.duration ??
-          (note.durationTicks && p.midiPpq
-            ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
-            : 0.5)
-      );
-      p.depthAnim = {
-        startMs: p.millis(),
-        durationMs: durationSec * 1000,
-        scatterRadius: p.max(p.width, p.height) * 6,
-      };
-      return;
-    }
-
-    const isPhraseStart = (note.currentCue - 1) % NOTES_PER_PHRASE === 0;
-    if (isPhraseStart) {
-      if (note.currentCue === 1) {
-        p.midiFrames = [];
-      } else if (p.depthAnim) {
-        const elapsed = p.millis() - p.depthAnim.startMs;
-        if (elapsed < p.depthAnim.durationMs) {
-          p.pendingPhraseClear = true;
-          p.pendingFirstFrame = buildRandomFrame();
-          return;
+    if (
+      Number(note.currentCue) % 25 === 1 ||
+      (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS
+      // Number(note.currentCue) > FFT_RECT_ALL_FOUR_AFTER_CUE
+    ) {
+      for (let i = 0; i < 4; i++) {
+        p.fftRectGateStartSec[i] = s;
+        p.fftRectGateEndSec[i] = e;
+        if (longNote) {
+          p.fftRectGrowHalfSide[i] = 0;
+          p.fftRectGrowHalfSideRate[i] = p.random(0.5, 1.75);
+        } else {
+          p.fftRectGrowHalfSide[i] = null;
         }
-        p.midiFrames = [];
-      } else {
-        p.midiFrames = [];
       }
+      return;
     }
+    const c = note.currentCue ?? 1;
+    const idx = (c - 1) % 4;
+    mergeFftGate(p, idx, s, e);
+    if (longNote) {
+      p.fftRectGrowHalfSide[idx] = 0;
+      p.fftRectGrowHalfSideRate[idx] = p.random(0.62, 1.45);
+    } else {
+      p.fftRectGrowHalfSide[idx] = null;
+    }
+  };
 
-    p.midiFrames.push(buildRandomFrame());
+  p.onTrack1Cue = function (note) {
+    const durationSec = Math.max(
+      0.04,
+      note.duration ??
+        (note.durationTicks && p.midiPpq
+          ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
+          : 0.5)
+    );
+    const t = p.getSongPlaybackTime();
+    if (Number.isFinite(t)) {
+      p.blackFade = { startSec: t, durationSec };
+    }
+    applyBgGradient(this);
   };
 
   p.setup = async () => {
     p.pixelDensity(1);
-    p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
-    p.track2BaseHue = p.random(360);
-    p.track2HueCurrent = p.track2BaseHue;
-    p.track2HueTarget = p.track2BaseHue;
+    p.createCanvas(window.innerWidth, window.innerHeight);
+    p.clear();
+    p.angleMode(p.DEGREES);
+    p.colorMode(p.HSB, 360, 100, 100, 1);
     p.canvas.style.position = 'relative';
     p.canvas.style.zIndex = '1';
-    p.perspective(p.PI / 2.75, p.width / p.height, 5, 20000);
+    p.canvas.style.background = 'transparent';
+
+    const bgWrap = document.createElement('div');
+    bgWrap.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;';
+    p.bgGradientEl = document.createElement('div');
+    p.bgGradientEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+    bgWrap.appendChild(p.bgGradientEl);
+    document.body.insertBefore(bgWrap, document.body.firstChild);
+    p.randomSeed(Date.now());
+    applyBgGradient(p);
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
-      p.midiBpm = data.header.tempos[0]?.bpm ?? 120;
+      p.midiBpm = 152;
     });
-    const track2 = midiData?.tracks?.[2];
-    if (track2?.notes?.length) {
-      if (LOG_TRACK2_MIDI_DISCOVERY) {
-        const counts = new Map();
-        for (const n of track2.notes) {
-          counts.set(n.midi, (counts.get(n.midi) || 0) + 1);
-        }
-        const histogram = [...counts.entries()]
-          .sort((a, b) => a[0] - b[0])
-          .map(([midi, count]) => ({ midi, count }));
-        console.log(
-          `[Track2 Redrum] "${track2.name || '(unnamed)'}" — ${track2.notes.length} notes — MIDI pitch histogram (find kick/snare vs hats):`,
-          histogram
-        );
-      }
-      // p.scheduleCueSet(track2.notes, 'onTrack2Cue', true);
-    } else {
-      console.warn('RectanglesNo1: MIDI track 2 has no notes (check export / track index).');
-    }
-    const track3 = midiData?.tracks?.[3];
-    if (track3?.notes?.length) {
-      p.scheduleCueSet(track3.notes, 'onTrack3Cue');
-      const phraseStarts = track3.notes
-        .filter((n) => n.currentCue && (n.currentCue - 1) % NOTES_PER_PHRASE === 0)
-        .map((n) => n.time)
-        .sort((a, b) => a - b);
-      const songDuration = p.song?.duration?.() ?? 0;
-      p.phraseSpans = phraseStarts.map((start, i) => ({
-        start,
-        end: phraseStarts[i + 1] ?? songDuration,
-      }));
-    } else {
-      console.warn('RectanglesNo1: MIDI track 3 has no notes (check export / track index).');
+
+    p.scheduleCueSet(midiData.tracks[11]?.notes ?? [], 'onTrack11Cue', true);
+    p.scheduleCueSet(midiData.tracks[1].notes, 'onTrack1Cue');
+
+    const baseHue = Math.random() * 360;
+    const colorGen = new ColorGenerator(p, p.color(baseHue, 92, 94));
+    p.fftRectColors = colorGen.getTetradic();
+
+    p.fft = new p5.FFT();
+    if (p.song) {
+      p.song.disconnect();
+      p.song.connect(p.fft);
+      p.fft.gain.toDestination();
     }
   };
 
   p.draw = () => {
-    const t = p.millis() * 0.001;
-    const orbit = p.max(p.width, p.height) * 0.72;
-    const hueDelta = ((p.track2HueTarget - p.track2HueCurrent + 540) % 360) - 180;
-    p.track2HueCurrent = (p.track2HueCurrent + hueDelta * 0.2 + 360) % 360;
-    p.track2Pulse = p.max(0, p.track2Pulse - 0.025);
-    const bgLightness = 8 + p.track2Pulse * 28;
-    const bgSaturation = 70 + p.track2Pulse * 20;
-    const bgColor = p.color(
-      `hsl(${p.track2HueCurrent.toFixed(1)}, ${bgSaturation.toFixed(1)}%, ${bgLightness.toFixed(1)}%)`
-    );
+    if (!p.fft) return;
 
-    const audioTimeSec =
-      typeof p.song?.time === 'function'
-        ? p.song.time()
-        : Number(p.song?.elt?.currentTime ?? NaN);
-    if (Number.isFinite(audioTimeSec) && p.phraseSpans.length) {
-      for (const span of p.phraseSpans) {
-        if (audioTimeSec >= span.start && audioTimeSec < span.end) {
-          const phraseProgress = p.constrain(
-            (audioTimeSec - span.start) / Math.max(0.001, span.end - span.start),
-            0,
-            1
-          );
-          p.cameraAngleTarget = phraseProgress * p.TWO_PI;
-          break;
-        }
+    p.clear();
+
+    drawBlackFadeRects(p);
+
+    p.fft.analyze();
+    let wave = p.fft.waveform();
+    if (!wave?.length) wave = new Float32Array(1024);
+
+    const wlen = wave.length;
+    const waveSm = new Float32Array(wlen);
+    const r = RECT_WAVE_SMOOTH_R;
+    const denom = 2 * r + 1;
+    for (let i = 0; i < wlen; i++) {
+      let sum = 0;
+      for (let k = -r; k <= r; k++) {
+        sum += wave[(i + k + wlen) % wlen] ?? 0;
       }
-    }
-    const angleDelta = ((p.cameraAngleTarget - p.cameraAngle + p.PI * 3) % p.TWO_PI) - p.PI;
-    p.cameraAngle = (p.cameraAngle + angleDelta * 0.12 + p.TWO_PI) % p.TWO_PI;
-    const camRadius = p.max(p.width, p.height) * CAMERA_RADIUS_MULT;
-    const camX = Math.cos(p.cameraAngle) * camRadius;
-    const camZ = Math.sin(p.cameraAngle) * camRadius;
-    const camY = Math.sin(t * 0.35) * camRadius * 0.12;
-    p.camera(camX, camY, camZ, 0, 0, 0, 0, 1, 0);
-
-    p.background(0);
-
-    p.colorMode(p.RGB, 255);
-
-    const amb = 22 + p.sin(t * 0.35) * 14;
-    p.ambientLight(amb * 0.45, amb * 0.35, amb * 0.75);
-
-    const lx1 = p.sin(t * 0.62) * orbit;
-    const lz1 = p.cos(t * 0.62) * orbit * 0.85;
-    p.pointLight(255, 90, 180, lx1, p.cos(t * 0.48) * orbit * 0.35, 320 + lz1);
-
-    const lx2 = p.sin(t * 0.48 + p.PI * 0.65) * orbit;
-    const lz2 = p.cos(t * 0.48 + p.PI * 0.65) * orbit * 0.9;
-    p.pointLight(80, 200, 255, lx2, p.sin(t * 0.55) * orbit * 0.4, 280 + lz2);
-
-    const lx3 = p.sin(t * 0.28) * orbit * 0.55;
-    const ly3 = p.cos(t * 0.33) * orbit * 0.5;
-    p.pointLight(255, 220, 140, lx3, ly3, 480 + p.sin(t * 0.4) * 120);
-
-    p.directionalLight(40, 70, 120, -0.35, 0.4, -0.85);
-    p.directionalLight(90, 40, 110, 0.5, -0.2, -0.75);
-
-    const frames = p.midiFrames;
-    let depthAnim = p.depthAnim;
-    let scatterEase = null;
-    let scatterRadius = 0;
-    if (depthAnim) {
-      const elapsed = p.millis() - depthAnim.startMs;
-      scatterEase = p.constrain(elapsed / depthAnim.durationMs, 0, 1);
-      scatterRadius = depthAnim.scatterRadius;
-      if (scatterEase >= 1) {
-        p.depthAnim = null;
-        scatterEase = null;
-        if (p.pendingPhraseClear) {
-          p.midiFrames = [];
-          p.pendingPhraseClear = false;
-          if (p.pendingFirstFrame) {
-            p.midiFrames.push(p.pendingFirstFrame);
-            p.pendingFirstFrame = null;
-          }
-        }
-      }
+      waveSm[i] = sum / denom;
     }
 
-    for (let i = 0; i < frames.length; i++) {
-      const f = frames[i];
-      let x = f.x;
-      let y = f.y;
-      let z = f.z;
-      if (scatterEase != null) {
-        const eased = easeOutCubic(scatterEase);
-        const orbitAngle = (i / Math.max(1, frames.length)) * p.TWO_PI + t * 0.35;
-        const wave = 0.7 + 0.3 * Math.sin(orbitAngle * 2.3 + f.hue * 0.02);
-        const r = scatterRadius * wave;
-        const sx = Math.cos(orbitAngle) * r;
-        const sy = Math.sin(orbitAngle * 1.7 + f.ry) * r * 0.35;
-        const sz = Math.sin(orbitAngle) * r;
-        x = p.lerp(sx, f.x, eased);
-        y = p.lerp(sy, f.y, eased);
-        z = p.lerp(sz, f.z, eased);
+    if (!p.fftRectColors?.length) return;
+
+    const tPlay = p.getSongPlaybackTime();
+    const silent = new Float32Array(wlen);
+
+    const layoutSize = p.min(p.width, p.height);
+    const halfSide = layoutSize * 0.14;
+    const cx = p.width * 0.5;
+    const cy = p.height * 0.5;
+    const idealHalfGap = layoutSize * 0.16 * FFT_RECT_GAP_MUL;
+    const pad = halfSide * 2.5;
+    const maxHalfX = p.min(cx - pad, p.width - cx - pad);
+    const maxHalfY = p.min(cy - pad, p.height - cy - pad);
+    const halfGapX = p.min(idealHalfGap, p.max(0, maxHalfX));
+    const halfGapY = p.min(idealHalfGap, p.max(0, maxHalfY));
+    const xL = cx - halfGapX;
+    const xR = cx + halfGapX;
+    const yT = cy - halfGapY;
+    const yB = cy + halfGapY;
+    const spots = [
+      [xL, yT],
+      [xR, yT],
+      [xL, yB],
+      [xR, yB],
+    ];
+    for (let i = 0; i < 4; i++) {
+      const [rx, ry] = spots[i];
+      const gated =
+        Number.isFinite(tPlay) &&
+        tPlay >= p.fftRectGateStartSec[i] &&
+        tPlay < p.fftRectGateEndSec[i];
+      const src = gated ? waveSm : silent;
+      let hs = halfSide;
+      const g = p.fftRectGrowHalfSide[i];
+      if (typeof g === 'number') {
+        hs = p.max(g, 0.2);
+        if (gated && p.song?.isPlaying()) {
+          const step =
+            fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
+          p.fftRectGrowHalfSide[i] = g + step;
+        }
       }
-      p.push();
-      p.translate(x, y, z);
-      if (f.rx) p.rotateX(f.rx);
-      if (f.ry) p.rotateY(f.ry);
-      if (f.rz) p.rotateZ(f.rz);
-      const c = p.color(`hsl(${f.hue}, 100%, 52%)`);
-      drawRectTubeFrame(p, f.w, f.h, f.tube, c);
-      p.pop();
+      drawFftRectOutline(p, src, wlen, rx, ry, hs, p.fftRectColors[i]);
     }
   };
 
-  p.mousePressed = () => {
+  p.mouseClicked = () => {
     p.togglePlayback();
   };
 
   p.windowResized = () => {
     p.resizeCanvas(window.innerWidth, window.innerHeight);
-    p.perspective(p.PI / 2.75, p.width / p.height, 5, 20000);
   };
 };
 

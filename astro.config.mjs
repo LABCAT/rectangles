@@ -21,6 +21,9 @@ export default defineConfig({
         '@': '/src',
       },
     },
+    optimizeDeps: {
+      exclude: ['p5.sound'],
+    },
     css: {
       preprocessorOptions: {
         scss: {
