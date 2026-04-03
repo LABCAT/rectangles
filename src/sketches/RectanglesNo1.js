@@ -12,6 +12,38 @@ const SQUARE_WAVE_STEPS = 240;
 const FFT_RECT_GAP_MUL = 1.08;
 /** Box-sample radius on waveform (reduces scratchy edge jitter). */
 const RECT_WAVE_SMOOTH_R = 6;
+/** Long track-3 notes: half-side starts at 0 and adds pixels per frame only while the MIDI gate is open. */
+const FFT_RECT_LONG_NOTE_TICKS = 50000;
+/** Minimum half-side growth per frame; at ~1900×1000 canvas area the effective rate matches this value. */
+const FFT_RECT_HALF_SIDE_GROW_PX = 8;
+const FFT_RECT_HALF_SIDE_GROW_REF_AREA = 1900 * 1000;
+
+const fftRectHalfSideGrowPxPerFrame = (p) => {
+  const area = Math.max(1, p.width * p.height);
+  const scale = Math.sqrt(area / FFT_RECT_HALF_SIDE_GROW_REF_AREA);
+  return FFT_RECT_HALF_SIDE_GROW_PX * Math.max(1, scale);
+};
+/** Track 3: open all four FFT gates when `currentCue` exceeds this (see `onTrack3Cue`). */
+const FFT_RECT_ALL_FOUR_AFTER_CUE = 155;
+
+const noteDurationSec = (p, note, fallbackSec) =>
+  Math.max(
+    0.02,
+    note.duration ??
+      (note.durationTicks && p.midiPpq
+        ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
+        : fallbackSec)
+  );
+
+const mergeFftGate = (p, idx, s, e) => {
+  const curE = p.fftRectGateEndSec[idx];
+  if (curE <= 0 || s >= curE - 1e-4) {
+    p.fftRectGateStartSec[idx] = s;
+    p.fftRectGateEndSec[idx] = e;
+  } else {
+    p.fftRectGateEndSec[idx] = Math.max(curE, e);
+  }
+};
 
 /** DonutsNo2-style layered glow: ADD + thick core + thin echoes. */
 const DONUTS_GLOW_CENTER_LAYER = 3;
@@ -23,6 +55,8 @@ const FADE_MAX_OPACITY = 1.05;
 const FADE_INNER_FIRST_ALPHA_SCALE = 0.48;
 const FADE_LAYER_FLOOR = 0.28;
 const FADE_LAYER_RANGE = 0.48;
+/** Lower bound of the stack during an active track-1 fade segment only (else level stays 1). */
+const FADE_BASE_STACK_OPACITY = 0.22;
 const FADE_OPACITY_EXP = 0.75;
 
 const RECT_OUTLINE_EDGES = [
@@ -194,43 +228,65 @@ const drawBlackFadeRectStack = (p, opacity) => {
 
 const drawBlackFadeRects = (p) => {
   const tPlay = p.getSongPlaybackTime();
-  if (!Number.isFinite(tPlay)) return;
-
-  let progress = 0;
-  if (p.blackFade?.durationSec > 0) {
-    const elapsed = (tPlay - p.blackFade.startSec) * 1000;
-    progress = p.constrain(elapsed / (p.blackFade.durationSec * 1000), 0, 1);
+  let level = 1;
+  const dur = p.blackFade?.durationSec ?? 0;
+  if (Number.isFinite(tPlay) && dur > 0) {
+    const t0 = p.blackFade.startSec;
+    const t1 = t0 + dur;
+    if (tPlay >= t0 && tPlay < t1) {
+      const progress = p.constrain((tPlay - t0) / dur, 0, 1);
+      const pulse = progress ** FADE_OPACITY_EXP;
+      level = FADE_BASE_STACK_OPACITY + (1 - FADE_BASE_STACK_OPACITY) * pulse;
+    }
   }
 
-  drawBlackFadeRectStack(p, progress ** FADE_OPACITY_EXP);
+  drawBlackFadeRectStack(p, level);
 };
 
 const sketch = (p) => {
   p.fft = null;
   p.fftRectColors = null;
   p.bgGradientEl = null;
-  p.introBlackCover = true;
   p.blackFade = { startSec: 0, durationSec: 0 };
+  p.fftRectGateStartSec = [0, 0, 0, 0];
+  p.fftRectGateEndSec = [0, 0, 0, 0];
+  p.fftRectGrowHalfSide = [null, null, null, null];
+  p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
 
-  p.onTrack2Cue = function (note) {
-    const durationSec = Math.max(
-      0.06,
-      note.duration ??
-        (note.durationTicks && p.midiPpq
-          ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
-          : 0.22)
-    ) * 1.4;
+  p.onTrack11Cue = function (note) {
+    const s = note.time;
+    const e = s + noteDurationSec(p, note, 0.22);
+    const longNote = (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS;
 
-    
-
-    if (note.midi === 36 || note.midi === 37) {
-      const endMs = p.millis() + durationSec * 1000;
-      p.drumsActiveUntilMs = Math.max(p.drumsActiveUntilMs, endMs);
+    if (
+      Number(note.currentCue) % 25 === 1 ||
+      (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS
+      // Number(note.currentCue) > FFT_RECT_ALL_FOUR_AFTER_CUE
+    ) {
+      for (let i = 0; i < 4; i++) {
+        p.fftRectGateStartSec[i] = s;
+        p.fftRectGateEndSec[i] = e;
+        if (longNote) {
+          p.fftRectGrowHalfSide[i] = 0;
+          p.fftRectGrowHalfSideRate[i] = p.random(0.5, 1.75);
+        } else {
+          p.fftRectGrowHalfSide[i] = null;
+        }
+      }
+      return;
+    }
+    const c = note.currentCue ?? 1;
+    const idx = (c - 1) % 4;
+    mergeFftGate(p, idx, s, e);
+    if (longNote) {
+      p.fftRectGrowHalfSide[idx] = 0;
+      p.fftRectGrowHalfSideRate[idx] = p.random(0.62, 1.45);
+    } else {
+      p.fftRectGrowHalfSide[idx] = null;
     }
   };
 
   p.onTrack1Cue = function (note) {
-    p.introBlackCover = false;
     const durationSec = Math.max(
       0.04,
       note.duration ??
@@ -266,10 +322,10 @@ const sketch = (p) => {
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
-      p.midiBpm = 143;
+      p.midiBpm = 152;
     });
 
-    p.scheduleCueSet(midiData.tracks[2].notes, 'onTrack2Cue', true);
+    p.scheduleCueSet(midiData.tracks[11]?.notes ?? [], 'onTrack11Cue', true);
     p.scheduleCueSet(midiData.tracks[1].notes, 'onTrack1Cue');
 
     const baseHue = Math.random() * 360;
@@ -282,8 +338,6 @@ const sketch = (p) => {
       p.song.connect(p.fft);
       p.fft.gain.toDestination();
     }
-
-    p.introBlackCover = true;
   };
 
   p.draw = () => {
@@ -291,16 +345,11 @@ const sketch = (p) => {
 
     p.clear();
 
-    if (p.introBlackCover) {
-      drawBlackFadeRectStack(p, 1);
-      return;
-    }
-
     drawBlackFadeRects(p);
 
     p.fft.analyze();
-    const wave = p.fft.waveform();
-    if (!wave?.length) return;
+    let wave = p.fft.waveform();
+    if (!wave?.length) wave = new Float32Array(1024);
 
     const wlen = wave.length;
     const waveSm = new Float32Array(wlen);
@@ -316,18 +365,23 @@ const sketch = (p) => {
 
     if (!p.fftRectColors?.length) return;
 
+    const tPlay = p.getSongPlaybackTime();
+    const silent = new Float32Array(wlen);
+
     const layoutSize = p.min(p.width, p.height);
     const halfSide = layoutSize * 0.14;
     const cx = p.width * 0.5;
     const cy = p.height * 0.5;
-    const idealHalfGap = p.height * 0.16 * FFT_RECT_GAP_MUL;
+    const idealHalfGap = layoutSize * 0.16 * FFT_RECT_GAP_MUL;
     const pad = halfSide * 2.5;
     const maxHalfX = p.min(cx - pad, p.width - cx - pad);
+    const maxHalfY = p.min(cy - pad, p.height - cy - pad);
     const halfGapX = p.min(idealHalfGap, p.max(0, maxHalfX));
+    const halfGapY = p.min(idealHalfGap, p.max(0, maxHalfY));
     const xL = cx - halfGapX;
     const xR = cx + halfGapX;
-    const yT = cy - idealHalfGap;
-    const yB = cy + idealHalfGap;
+    const yT = cy - halfGapY;
+    const yB = cy + halfGapY;
     const spots = [
       [xL, yT],
       [xR, yT],
@@ -336,7 +390,22 @@ const sketch = (p) => {
     ];
     for (let i = 0; i < 4; i++) {
       const [rx, ry] = spots[i];
-      drawFftRectOutline(p, waveSm, wlen, rx, ry, halfSide, p.fftRectColors[i]);
+      const gated =
+        Number.isFinite(tPlay) &&
+        tPlay >= p.fftRectGateStartSec[i] &&
+        tPlay < p.fftRectGateEndSec[i];
+      const src = gated ? waveSm : silent;
+      let hs = halfSide;
+      const g = p.fftRectGrowHalfSide[i];
+      if (typeof g === 'number') {
+        hs = p.max(g, 0.2);
+        if (gated && p.song?.isPlaying()) {
+          const step =
+            fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
+          p.fftRectGrowHalfSide[i] = g + step;
+        }
+      }
+      drawFftRectOutline(p, src, wlen, rx, ry, hs, p.fftRectColors[i]);
     }
   };
 
@@ -346,7 +415,6 @@ const sketch = (p) => {
 
   p.windowResized = () => {
     p.resizeCanvas(window.innerWidth, window.innerHeight);
-    p.perspective(p.PI / 2.75, p.width / p.height, 5, 20000);
   };
 };
 
