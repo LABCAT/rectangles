@@ -325,8 +325,10 @@ const sketch = (p) => {
       p.midiBpm = 152;
     });
 
-    p.scheduleCueSet(midiData.tracks[11]?.notes ?? [], 'onTrack11Cue', true);
-    p.scheduleCueSet(midiData.tracks[1].notes, 'onTrack1Cue');
+    if (midiData?.tracks) {
+      p.scheduleCueSet(midiData.tracks[11]?.notes ?? [], 'onTrack11Cue', true);
+      p.scheduleCueSet(midiData.tracks[1]?.notes ?? [], 'onTrack1Cue');
+    }
 
     const baseHue = Math.random() * 360;
     const colorGen = new ColorGenerator(p, p.color(baseHue, 92, 94));
