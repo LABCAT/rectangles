@@ -1,5 +1,6 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
+import initCapture from '@lib/p5.capture.js';
 import ColorGenerator from '@lib/p5.colorGenerator.js';
 import { getFullWindowGradientCss } from '@lib/p5.circlesStyleFullWindowGradient.js';
 
@@ -160,6 +161,8 @@ const applyBgGradient = (p) => {
   const { background, backgroundBlendMode } = getFullWindowGradientCss(p);
   p.bgGradientEl.style.background = background;
   p.bgGradientEl.style.backgroundBlendMode = backgroundBlendMode;
+  document.documentElement.style.setProperty('--gradient-bg', background);
+  document.documentElement.style.setProperty('--gradient-blend-mode', backgroundBlendMode || 'normal');
 };
 
 /** Axis-aligned frame between inner and outer half-extents from (cx, cy). */
@@ -340,6 +343,7 @@ const sketch = (p) => {
       p.song.connect(p.fft);
       p.fft.gain.toDestination();
     }
+
   };
 
   p.draw = () => {
@@ -401,7 +405,7 @@ const sketch = (p) => {
       const g = p.fftRectGrowHalfSide[i];
       if (typeof g === 'number') {
         hs = p.max(g, 0.2);
-        if (gated && p.song?.isPlaying()) {
+        if (gated && (p.song?.isPlaying() || p.captureInProgress)) {
           const step =
             fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
           p.fftRectGrowHalfSide[i] = g + step;

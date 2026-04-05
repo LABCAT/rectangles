@@ -4,6 +4,15 @@ import { Midi } from '@tonejs/midi';
 
 p5.prototype.getSongPlaybackTime = function () {
   if (!this.song) return NaN;
+  if (
+    this.captureInProgress &&
+    typeof this.audioSampleRate === 'number' &&
+    this.audioSampleRate > 0 &&
+    typeof this.song._lastPos === 'number'
+  ) {
+    const t = this.song._lastPos / this.audioSampleRate;
+    if (Number.isFinite(t)) return t;
+  }
   if (this.song.isPlaying()) {
     if (this._playbackWallStartPerf == null) return 0;
     const rate = this.song.speed ?? 1;
