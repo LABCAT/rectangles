@@ -1,0 +1,10 @@
+---
+description: Do not add summaries or recaps unless the user explicitly asks
+alwaysApply: true
+---
+
+# No unsolicited summaries
+
+- Do not provide a **summary**, **recap**, **TL;DR**, "in conclusion," or "key takeaways" unless the user clearly asks for one (e.g. "summarize," "give me a summary," "recap," "TL;DR").
+- Answer the question or complete the task directly; skip closing wrap-ups that restate what you already said.
+- This applies to all replies, including after multi-step work, code changes, and explanations — unless summarization was part of the request.

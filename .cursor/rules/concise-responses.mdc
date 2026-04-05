@@ -1,0 +1,10 @@
+---
+description: Be maximally concise in all assistant replies and explanations
+alwaysApply: true
+---
+
+# Concision
+
+- Default to the shortest answer that fully satisfies the request: no filler, no repetition, no long preambles or wrap-up slogans.
+- Prefer bullets or a single short paragraph over essays; expand only when the user asks for depth, teaching, or a long-form artifact.
+- In code reviews and summaries, state what changed and why in plain language; skip decorative emphasis and redundant headings.
