@@ -1,5 +1,5 @@
 /**
- * One CSS gradient covering the full viewport (single background image, no stacked layers).
+ * One CSS linear-gradient covering the full viewport (single background, no stacked layers).
  */
 
 const chromaRgb = (p, h, sat, bri) => {

@@ -1,0 +1,13 @@
+---
+description: Change only what the user explicitly asked for; touch no other code
+alwaysApply: true
+---
+
+# Explicit scope only
+
+- Implement **only** what the user clearly requested. Do not expand scope.
+- Do **not** edit unrelated files, drive-by refactors, formatting-only passes, renames, comment cleanups, or “obvious” fixes elsewhere unless the user asked for them.
+- Do **not** “improve” neighboring code, dependencies, or config while doing the task.
+- If you notice an unrelated bug or opportunity, **describe it briefly** and wait for a separate request—do not fix it in the same change unless the user explicitly asked you to.
+
+When the request is ambiguous, ask a short clarifying question instead of guessing and changing extra code.

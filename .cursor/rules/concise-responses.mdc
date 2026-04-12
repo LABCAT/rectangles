@@ -8,3 +8,5 @@ alwaysApply: true
 - Default to the shortest answer that fully satisfies the request: no filler, no repetition, no long preambles or wrap-up slogans.
 - Prefer bullets or a single short paragraph over essays; expand only when the user asks for depth, teaching, or a long-form artifact.
 - In code reviews and summaries, state what changed and why in plain language; skip decorative emphasis and redundant headings.
+- If the user only asked for understanding, confirmation, or “do you get it,” reply in one or two sentences. No diagnosis, no “next steps,” no offers to change code unless they asked.
+- Say each idea once: no intro + long bullets + conclusion that repeat the same point. Works together with no-unrequested-summaries.mdc.
