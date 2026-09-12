@@ -56,10 +56,38 @@ p5.prototype._midiCuePollTick = function () {
   }
 };
 
+p5.prototype._startSongPlayback = function (fromSec = 0) {
+  this._playbackWallStartPerf = performance.now();
+  this._playbackSongSecondsAtWallStart = fromSec;
+  this._reindexMidiCues(fromSec);
+  this._stopMidiCuePoll();
+  this.userStartAudio();
+  this.song.play();
+  this._midiCuePollId = setInterval(() => this._midiCuePollTick(), 20);
+  this._midiCuePollTick();
+  this.showingStatic = false;
+  this.songHasFinished = false;
+  if (this.canvas) {
+    this.canvas.classList.add('p5Canvas--cursor-pause');
+    this.canvas.classList.remove('p5Canvas--cursor-play');
+  }
+};
+
+p5.prototype._restartSongPlayback = function () {
+  this.resetAnimation?.();
+  this.song.stop();
+  this.song.paused = false;
+  this.song.playing = false;
+  this._playbackFrozenSec = 0;
+  this._startSongPlayback(0);
+};
+
 p5.prototype.loadSong = async function (audioUrl, midiUrl, callback) {
   try {
     const sound = await this.loadSound(audioUrl);
     this.song = sound;
+    this.songHasFinished = false;
+    this.loopAudio = this.loopAudio ?? false;
     this._midiTransportCues = [];
     this._midiCueSorted = [];
     this._midiCueNext = 0;
@@ -70,6 +98,16 @@ p5.prototype.loadSong = async function (audioUrl, midiUrl, callback) {
     this.totalAnimationFrames = Math.floor((sound.duration() || 0) * 60);
 
     sound.onended(() => {
+      if (this.loopAudio) {
+        if (this.captureEnabled && this.captureInProgress) {
+          this.captureInProgress = false;
+          this.downloadFrames?.();
+          return;
+        }
+        this._restartSongPlayback();
+        return;
+      }
+
       this.songHasFinished = true;
       this._stopMidiCuePoll();
       this._playbackWallStartPerf = null;
@@ -157,32 +195,17 @@ p5.prototype.togglePlayback = function () {
       this.canvas.classList.add('p5Canvas--cursor-play');
       this.canvas.classList.remove('p5Canvas--cursor-pause');
     } else {
-      const duration = this.song.duration();
       let fromSec = Math.max(0, this.getSongPlaybackTime() || 0);
-      if (Number.isFinite(fromSec) && Number.isFinite(duration) && fromSec >= duration && duration > 0) {
-        this.resetAnimation?.();
-        this.song.jump(0);
-        this._playbackFrozenSec = 0;
-        fromSec = 0;
+      const atEnd = this.songHasFinished;
+      if (atEnd) {
+        this._restartSongPlayback();
+        return;
       }
+
       const playIcon = document.getElementById('play-icon');
       if (playIcon) playIcon.classList.remove('fade-in');
 
-      const startPlayback = () => {
-        this._playbackWallStartPerf = performance.now();
-        this._playbackSongSecondsAtWallStart = fromSec;
-        this._reindexMidiCues(fromSec);
-        this._stopMidiCuePoll();
-        this.userStartAudio();
-        this.song.play();
-        this._midiCuePollId = setInterval(() => this._midiCuePollTick(), 20);
-        this._midiCuePollTick();
-        this.showingStatic = false;
-        this.canvas.classList.add('p5Canvas--cursor-pause');
-        this.canvas.classList.remove('p5Canvas--cursor-play');
-      };
-
-      startPlayback();
+      this._startSongPlayback(fromSec);
     }
   }
 };
