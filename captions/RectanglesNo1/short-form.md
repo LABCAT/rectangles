@@ -1,13 +1,3 @@
-# #Rectangles
-
-Creative coding experiments exploring audio-reactive visualizations through rectangular form.
-
-Follow on Instagram → https://www.instagram.com/labcat2020/
-
-## #RectanglesNo1
-
-https://rectangles.labcat.nz/number-1/
-
 ⚡🔊 Pumping bass rewires the frame.
 
 #RectanglesNo1 — four corner halos blaze and fracture, light tearing through the frame of a #Luminous reality. #Futuristic voltage tickles the edges of the universe. 🌐💫 🎧⚡
