@@ -4,6 +4,11 @@ export const sketchMetadata = {
     description: 'A centered rectangle.',
     sketch: 'RectanglesNo1.js',
   },
+  'number-2': {
+    title: '#RectanglesNo2',
+    description: 'WebGL torus.',
+    sketch: 'RectanglesNo2.js',
+  },
 };
 
 export function getAllSketches() {

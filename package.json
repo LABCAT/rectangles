@@ -13,12 +13,11 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@tonejs/midi": "^2.0.28",
+    "@labcat2020/animation-lab": "0.2.1",
+    "@labcat2020/p5.audioreactive": "^0.2.0",
+    "@labcat2020/p5.audioreactive-capture": "^0.1.4",
     "astro": "^6.0.8",
-    "jszip": "^3.10.1",
-    "normalize.css": "^8.0.1",
-    "p5": "^2.2.3",
-    "p5.sound": "^0.2.0"
+    "p5": "2.2.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -29,10 +28,5 @@
   "engines": {
     "node": ">=24.13.0"
   },
-  "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be",
-  "pnpm": {
-    "patchedDependencies": {
-      "p5.sound@0.2.0": "patches/p5.sound@0.2.0.patch"
-    }
-  }
+  "packageManager": "pnpm@10.32.1+sha512.a706938f0e89ac1456b6563eab4edf1d1faf3368d1191fc5c59790e96dc918e4456ab2e67d613de1043d2e8c81f87303e6b40d4ffeca9df15ef1ad567348f2be"
 }

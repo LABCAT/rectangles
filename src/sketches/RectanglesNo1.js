@@ -1,8 +1,7 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
-import initCapture from '@lib/p5.capture.js';
 import ColorGenerator from '@lib/p5.colorGenerator.js';
-import { getFullWindowGradientCss } from '@lib/p5.circlesStyleFullWindowGradient.js';
+import { getFullWindowGradientCss } from '@sketches/functions/fullWindowGradientCss.js';
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';

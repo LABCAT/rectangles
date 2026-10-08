@@ -4,33 +4,28 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  p5.sound@0.2.0:
-    hash: 39236bf4d46070291b4ed61742de38f1c78e3ed9b58f8b26e08f951c81d01bf1
-    path: patches/p5.sound@0.2.0.patch
+overrides:
+  p5: 2.2.3
 
 importers:
 
   .:
     dependencies:
-      '@tonejs/midi':
-        specifier: ^2.0.28
-        version: 2.0.28
+      '@labcat2020/animation-lab':
+        specifier: 0.2.1
+        version: 0.2.1(astro@6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3))(sass-embedded@1.98.0)
+      '@labcat2020/p5.audioreactive':
+        specifier: ^0.2.0
+        version: 0.2.0(p5@2.2.3)
+      '@labcat2020/p5.audioreactive-capture':
+        specifier: ^0.1.4
+        version: 0.1.4(p5@2.2.3)
       astro:
         specifier: ^6.0.8
         version: 6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3)
-      jszip:
-        specifier: ^3.10.1
-        version: 3.10.1
-      normalize.css:
-        specifier: ^8.0.1
-        version: 8.0.1
       p5:
-        specifier: ^2.2.3
+        specifier: 2.2.3
         version: 2.2.3
-      p5.sound:
-        specifier: ^0.2.0
-        version: 0.2.0(patch_hash=39236bf4d46070291b4ed61742de38f1c78e3ed9b58f8b26e08f951c81d01bf1)
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -473,6 +468,26 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
+
+  '@labcat2020/animation-lab@0.2.1':
+    resolution: {integrity: sha512-9DaY2JvQNW7U2j/SmtiFw2Lgr1QlhNvCG5ajzU80qm9382p637G0QsR+VpO3+pW7RbogO2D7t48Vx8fa/CnhTw==}
+    hasBin: true
+    peerDependencies:
+      astro: ^6.0.8
+      sass-embedded: ^1.98.0
+
+  '@labcat2020/p5.audioreactive-capture@0.1.4':
+    resolution: {integrity: sha512-ov0N0m3/g7ZRsi1LjylX+4fw6kyhOV3SwwVGAw/QgT9w1uQX2w+OslGO1dTjoJYdB5zYLig9V0UfOH1cNdFk1w==}
+    peerDependencies:
+      p5: 2.2.3
+
+  '@labcat2020/p5.audioreactive@0.2.0':
+    resolution: {integrity: sha512-6rUP9iEOyHEFwGZ06jJkxhfZTMvtYwa/W1q6pmd/pNxyqCXyWFUW/Ef+Au/rIq87BFMwLPEE9NN2iYwu/A64Rw==}
+    peerDependencies:
+      p5: 2.2.3
+
+  '@labcat2020/rocketship@0.1.0':
+    resolution: {integrity: sha512-dib4+7r+brcMESqeVDU/sNWpx9azRcBImzWZxAmX4Qc4EbxK604kYA7d1xbHr2KlqI6136zpXEENn7UZmlklnQ==}
 
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
@@ -2834,6 +2849,28 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
+  '@labcat2020/animation-lab@0.2.1(astro@6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3))(sass-embedded@1.98.0)':
+    dependencies:
+      '@labcat2020/rocketship': 0.1.0
+      astro: 6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3)
+      normalize.css: 8.0.1
+      sass-embedded: 1.98.0
+
+  '@labcat2020/p5.audioreactive-capture@0.1.4(p5@2.2.3)':
+    dependencies:
+      jszip: 3.10.1
+      p5: 2.2.3
+
+  '@labcat2020/p5.audioreactive@0.2.0(p5@2.2.3)':
+    dependencies:
+      '@tonejs/midi': 2.0.28
+      p5: 2.2.3
+      p5.sound: 0.2.0
+    transitivePeerDependencies:
+      - supports-color
+
+  '@labcat2020/rocketship@0.1.0': {}
+
   '@oslojs/encoding@1.1.0': {}
 
   '@parcel/watcher-android-arm64@2.5.6':
@@ -4408,7 +4445,7 @@ snapshots:
 
   p-timeout@7.0.1: {}
 
-  p5.sound@0.2.0(patch_hash=39236bf4d46070291b4ed61742de38f1c78e3ed9b58f8b26e08f951c81d01bf1):
+  p5.sound@0.2.0:
     dependencies:
       lodash: 4.17.23
       tone: 15.1.22
