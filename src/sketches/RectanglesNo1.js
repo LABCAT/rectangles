@@ -1,6 +1,5 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
-import initCapture from '@lib/p5.capture.js';
 import ColorGenerator from '@lib/p5.colorGenerator.js';
 import { getFullWindowGradientCss } from '@sketches/functions/fullWindowGradientCss.js';
 

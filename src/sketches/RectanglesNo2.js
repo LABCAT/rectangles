@@ -1,6 +1,6 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
-import '@lib/p5.fps.js';
+import '../lib/p5.fps.js';
 import { drawRectTubeFrame } from '@sketches/functions/drawRectTubeFrame.js';
 import { getNo2BackgroundGradientCss } from '@sketches/functions/no2BackgroundGradientCss.js';
 

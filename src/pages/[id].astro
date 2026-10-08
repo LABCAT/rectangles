@@ -1,5 +1,5 @@
 ---
-import SketchLayout from '@layouts/SketchLayout.astro';
+import SketchLayout from '@labcat2020/animation-lab/layouts/SketchLayout.astro';
 import { sketchMetadata } from '@/sketchMetadata.js';
 
 export async function getStaticPaths() {
@@ -12,7 +12,7 @@ export async function getStaticPaths() {
 const { sketchInfo } = Astro.props;
 ---
 
-<SketchLayout title={sketchInfo.title} description={sketchInfo.description} />
+<SketchLayout title={sketchInfo.title} description={sketchInfo.description} header={true} />
 
 <script>
   const sketches = {
