@@ -9,6 +9,11 @@ export const sketchMetadata = {
     description: 'WebGL torus.',
     sketch: 'RectanglesNo2.js',
   },
+  'number-3': {
+    title: '#RectanglesNo3',
+    description: 'Mondrian grid reveal.',
+    sketch: 'RectanglesNo3.js',
+  },
 };
 
 export function getAllSketches() {
