@@ -1,7 +1,17 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
 import ColorGenerator from '@lib/p5.colorGenerator.js';
+import initCapture from '@labcat2020/p5.audioreactive-capture';
+import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
+import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
 import { getFullWindowGradientCss } from '@sketches/functions/fullWindowGradientCss.js';
+import { readReelParams, applyPart } from '../lib/reelParams.js';
+import { createNo1Look, NO1_PARTS, NO1_BPM } from '../lib/no1Look.js';
+
+// Reels: ?seed= picks a reproducible variation (rectangle hues, background
+// gradients, swell rates; no seed = a random one, logged to the console);
+// ?part=a|b|c|d sets p.captureRange to that part's bars (see NO1_PARTS) so a
+// capture renders just that section.
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
@@ -12,7 +22,7 @@ const SQUARE_WAVE_STEPS = 240;
 const FFT_RECT_GAP_MUL = 1.08;
 /** Box-sample radius on waveform (reduces scratchy edge jitter). */
 const RECT_WAVE_SMOOTH_R = 6;
-/** Long track-3 notes: half-side starts at 0 and adds pixels per frame only while the MIDI gate is open. */
+/** Long track-3 notes: half-side starts at 0 and grows (px per 60fps frame) only while the MIDI gate is open. */
 const FFT_RECT_LONG_NOTE_TICKS = 50000;
 /** Minimum half-side growth per frame; at ~1900×1000 canvas area the effective rate matches this value. */
 const FFT_RECT_HALF_SIDE_GROW_PX = 8;
@@ -23,8 +33,6 @@ const fftRectHalfSideGrowPxPerFrame = (p) => {
   const scale = Math.sqrt(area / FFT_RECT_HALF_SIDE_GROW_REF_AREA);
   return FFT_RECT_HALF_SIDE_GROW_PX * Math.max(1, scale);
 };
-/** Track 3: open all four FFT gates when `currentCue` exceeds this (see `onTrack3Cue`). */
-const FFT_RECT_ALL_FOUR_AFTER_CUE = 155;
 
 const noteDurationSec = (p, note, fallbackSec) =>
   Math.max(
@@ -246,6 +254,11 @@ const drawBlackFadeRects = (p) => {
 };
 
 const sketch = (p) => {
+  const reel = readReelParams(window.location.search);
+  const look = createNo1Look(reel.seed);
+  p.reelSeed = look.seed;
+  console.log(`RectanglesNo1 seed ${look.seed}${reel.part ? ` part ${reel.part}` : ''}`);
+
   p.fft = null;
   p.fftRectColors = null;
   p.bgGradientEl = null;
@@ -254,23 +267,21 @@ const sketch = (p) => {
   p.fftRectGateEndSec = [0, 0, 0, 0];
   p.fftRectGrowHalfSide = [null, null, null, null];
   p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
+  p.fftRectGrowStartSec = [0, 0, 0, 0];
 
   p.onTrack11Cue = function (note) {
     const s = note.time;
     const e = s + noteDurationSec(p, note, 0.22);
     const longNote = (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS;
 
-    if (
-      Number(note.currentCue) % 25 === 1 ||
-      (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS
-      // Number(note.currentCue) > FFT_RECT_ALL_FOUR_AFTER_CUE
-    ) {
+    if (Number(note.currentCue) % 25 === 1 || longNote) {
       for (let i = 0; i < 4; i++) {
         p.fftRectGateStartSec[i] = s;
         p.fftRectGateEndSec[i] = e;
         if (longNote) {
           p.fftRectGrowHalfSide[i] = 0;
-          p.fftRectGrowHalfSideRate[i] = p.random(0.5, 1.75);
+          p.fftRectGrowStartSec[i] = s;
+          p.fftRectGrowHalfSideRate[i] = look.growRate(note.currentCue, i, true);
         } else {
           p.fftRectGrowHalfSide[i] = null;
         }
@@ -282,7 +293,8 @@ const sketch = (p) => {
     mergeFftGate(p, idx, s, e);
     if (longNote) {
       p.fftRectGrowHalfSide[idx] = 0;
-      p.fftRectGrowHalfSideRate[idx] = p.random(0.62, 1.45);
+      p.fftRectGrowStartSec[idx] = s;
+      p.fftRectGrowHalfSideRate[idx] = look.growRate(c, idx, false);
     } else {
       p.fftRectGrowHalfSide[idx] = null;
     }
@@ -300,6 +312,8 @@ const sketch = (p) => {
     if (Number.isFinite(t)) {
       p.blackFade = { startSec: t, durationSec };
     }
+    // Each chord's gradient comes from (seed, cue), whatever ran before it.
+    p.randomSeed(look.bgSeed(note.currentCue));
     applyBgGradient(this);
   };
 
@@ -319,7 +333,18 @@ const sketch = (p) => {
     p.bgGradientEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
     bgWrap.appendChild(p.bgGradientEl);
     document.body.insertBefore(bgWrap, document.body.firstChild);
-    p.randomSeed(Date.now());
+    p.bgWrapperEl = bgWrap;
+    initCapture(p, {
+      prefix: 'RectanglesNo1',
+      enabled: false,
+      captureCSSBackground: true,
+      extension: compositeDomCaptureExtension({ background: createDomLayerCaptureBackground(bgWrap) }),
+    });
+    // Frames depend on song time alone (cues, buffer waveform, time-based swell), so a
+    // section cut can skip the draws before its start.
+    p.captureSeekable = true;
+    applyPart(p, NO1_PARTS, reel.part, { bpm: NO1_BPM });
+    p.randomSeed(look.bgSeed(0));
     applyBgGradient(p);
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
@@ -332,8 +357,7 @@ const sketch = (p) => {
       p.scheduleCueSet(midiData.tracks[1]?.notes ?? [], 'onTrack1Cue');
     }
 
-    const baseHue = Math.random() * 360;
-    const colorGen = new ColorGenerator(p, p.color(baseHue, 92, 94));
+    const colorGen = new ColorGenerator(p, p.color(look.baseHue, 92, 94));
     p.fftRectColors = colorGen.getTetradic();
 
     p.fft = new p5.FFT();
@@ -342,7 +366,6 @@ const sketch = (p) => {
       p.song.connect(p.fft);
       p.fft.gain.toDestination();
     }
-
   };
 
   p.draw = () => {
@@ -401,14 +424,14 @@ const sketch = (p) => {
         tPlay < p.fftRectGateEndSec[i];
       const src = gated ? waveSm : silent;
       let hs = halfSide;
-      const g = p.fftRectGrowHalfSide[i];
-      if (typeof g === 'number') {
-        hs = p.max(g, 0.2);
-        if (gated && (p.song?.isPlaying() || p.captureInProgress)) {
-          const step =
-            fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
-          p.fftRectGrowHalfSide[i] = g + step;
-        }
+      if (typeof p.fftRectGrowHalfSide[i] === 'number') {
+        // Swell = open-gate time since the long note × the per-frame rate at 60fps: a
+        // function of song time, so live play, full captures and section cuts match.
+        const t0 = p.fftRectGrowStartSec[i];
+        const t1 = Math.max(t0, p.fftRectGateEndSec[i]);
+        const grownSec = Number.isFinite(tPlay) ? p.constrain(tPlay, t0, t1) - t0 : 0;
+        const rate = fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
+        hs = p.max(grownSec * 60 * rate, 0.2);
       }
       drawFftRectOutline(p, src, wlen, rx, ry, hs, p.fftRectColors[i]);
     }
