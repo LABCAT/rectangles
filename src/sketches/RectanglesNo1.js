@@ -374,7 +374,7 @@ const sketch = (p) => {
     }
 
     p.fftRectColors = rectColors();
-    guardRestart();
+    guardStaleStops();
     if (partRange) p._playbackFrozenSec = partRange.start;
     emitTrack();
     window.addEventListener('labcat:track-prev', () => stepPart(-1));
@@ -431,15 +431,23 @@ const sketch = (p) => {
     for (const { fn, note } of before) fn.call(p, note);
   };
 
-  // Tone's Player fires p5.sound's onended for every source that stops, and a
-  // seek stops the old source, so the lib would take a seek for the song
-  // ending. Hold off its restart until that stale event has passed.
-  let restartGuardUntil = 0;
-  const guardRestart = () => {
-    const baseRestart = p._restartSongPlayback;
-    p._restartSongPlayback = function () {
-      if (performance.now() < restartGuardUntil) return;
-      return baseRestart.call(this);
+  // Tone's Player fires p5.sound's onended (its onstop) for every source that
+  // stops, and a seek stops the old source, so the lib would take a seek for
+  // the song ending (and with loopAudio, each restart's stop() fires it again,
+  // forever). The stale event can land >1s late on a busy machine, so a timer
+  // can't fence it: count the sources each jump stops and swallow that many.
+  let staleStops = 0;
+  const guardStaleStops = () => {
+    const sf = p.song?.soundfile;
+    if (!sf || sf._no1Guarded) return;
+    sf._no1Guarded = true;
+    const libOnStop = sf.onstop;
+    sf.onstop = function (...args) {
+      if (staleStops > 0) {
+        staleStops--;
+        return;
+      }
+      return libOnStop?.apply(this, args);
     };
   };
 
@@ -454,13 +462,26 @@ const sketch = (p) => {
     };
   };
 
-  // Move audio, clock and cue state to `sec`, playing or paused.
+  // Move audio, clock and cue state to `sec`, playing, paused or before the first play.
   const jumpTo = (sec) => {
     replayCuesBefore(sec);
     const sf = p.song?.soundfile;
-    if (sf?.state === 'started') {
-      restartGuardUntil = performance.now() + 750;
-      sf.seek(sec);
+    if (sf?.state === 'started' && p.song.isPlaying()) {
+      const sources = sf._activeSources?.size ?? 1;
+      try {
+        sf.seek(sec);
+        staleStops += sources;
+      } catch (e) {
+        console.warn('[RectanglesNo1] seek failed', e);
+      }
+    } else if (sf?.state === 'started') {
+      // Paused (p5.sound pauses at rate 0): a seek would start a zero-rate
+      // source that Tone ends at once. Stop cleanly; the next play starts at `sec`.
+      staleStops += sf._activeSources?.size ?? 1;
+      sf.stop();
+      p.song.paused = false;
+      p.song.playing = false;
+      startNextPlayAt(sec);
     } else {
       startNextPlayAt(sec);
     }
