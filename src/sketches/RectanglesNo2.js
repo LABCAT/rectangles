@@ -22,7 +22,7 @@ import { createNo2Look, melodyHue, pitchClassHue, hsbToRgb, TRACK_BPM, NO2_PARTS
  * state), so headless capture is reproducible and can fast-forward without
  * drawing (`p.captureSeekable`).
  *
- * URL: ?seed ?bpm ?beats ?speed ?t ?auto ?part (see lib/reelParams.js); ?fps=0.
+ * URL: ?seed ?bpm ?beats ?speed ?t ?auto ?part (see lib/reelParams.js).
  * Keys: N / P next / previous seed, R random seed, F FPS badge. Click: play/pause.
  */
 
@@ -279,10 +279,8 @@ const sketch = (p) => {
 
   p.setup = async () => {
     p.pixelDensity(1);
-    // FPS badge — in the control panel (open it to see it); on by default, ?fps=0 to hide, window.toggleFps() / press F
-    const params = new URLSearchParams(window.location.search);
-    const wantsFps = !params.has('fps') || params.get('fps') !== '0';
-    if (wantsFps) p.enableFpsIndicator();
+    // FPS badge — always on, in the control panel (open it to see it); window.toggleFps() / press F hides it
+    p.enableFpsIndicator();
     window.toggleFps = (opts) => p.toggleFpsIndicator(opts);
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
