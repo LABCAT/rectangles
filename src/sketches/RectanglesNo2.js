@@ -1,6 +1,9 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
 import '../lib/p5.fps.js';
+import initCapture from '@labcat2020/p5.audioreactive-capture';
+import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
+import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
 import { drawRectTubeFrame } from './functions/drawRectTubeFrame.js';
 import { getNo2BackgroundGradientCss } from './functions/no2BackgroundGradientCss.js';
 import { readReelParams, applyPart, randomSeed } from '../lib/reelParams.js';
@@ -198,6 +201,16 @@ const sketch = (p) => {
     p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
     p.canvas.style.position = 'relative';
     p.canvas.style.zIndex = '2';
+
+    // Headless capture composites the CSS background layers behind the canvas.
+    initCapture(p, {
+      prefix: 'RectanglesNo2',
+      enabled: false,
+      captureCSSBackground: true,
+      extension: compositeDomCaptureExtension({
+        background: createDomLayerCaptureBackground(p.bgWrapperEl),
+      }),
+    });
 
     setSeed(seed);
 
@@ -547,10 +560,24 @@ const sketch = (p) => {
     }
   };
 
+  let lastCaptureT = NaN;
+
   p.draw = () => {
+    const t = timeNow();
+    // Capture calls draw() directly per frame while p5's own loop keeps
+    // running; both would draw the same time. Draw each capture time once —
+    // the canvas keeps it (preserveDrawingBuffer) for the screenshot.
+    if (p.captureInProgress) {
+      if (t === lastCaptureT) return;
+      lastCaptureT = t;
+    } else lastCaptureT = NaN;
+    // Self-contained frame: the direct call skips p5's per-frame reset, so do
+    // it here (matrix + lights) and both paths render identically.
+    p.resetMatrix();
+    p.noLights();
+    p.blendMode(p.BLEND);
     p.clear();
     if (!ev) return;
-    const t = timeNow();
 
     // Live part preview loops its part.
     if (partRange && !p.captureInProgress && p.song?.isPlaying() && t >= partRange.end) {

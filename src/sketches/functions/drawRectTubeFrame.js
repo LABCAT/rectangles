@@ -7,46 +7,73 @@ const applyEmissiveGlow = (p, c) => {
   p.fill(c);
 };
 
-export const drawRectTubeFrame = (p, w, h, tubeR, c) => {
-  const hw = w / 2 - tubeR;
-  const hh = h / 2 - tubeR;
-  const spanX = w - 2 * tubeR;
-  const spanY = h - 2 * tubeR;
-  applyEmissiveGlow(p, c);
+// Four tubes + four corner spheres, in the frame's own XY plane.
+const buildFrame = (p, w, h, tubeR) =>
+  p.buildGeometry(() => {
+    const hw = w / 2 - tubeR;
+    const hh = h / 2 - tubeR;
+    const spanX = w - 2 * tubeR;
+    const spanY = h - 2 * tubeR;
+    for (const y of [-hh, hh]) {
+      p.push();
+      p.translate(0, y, 0);
+      p.rotateZ(p.HALF_PI);
+      p.cylinder(tubeR, spanX);
+      p.pop();
+    }
+    for (const x of [-hw, hw]) {
+      p.push();
+      p.translate(x, 0, 0);
+      p.cylinder(tubeR, spanY);
+      p.pop();
+    }
+    for (const [x, y] of [
+      [-hw, -hh],
+      [hw, -hh],
+      [-hw, hh],
+      [hw, hh],
+    ]) {
+      p.push();
+      p.translate(x, y, 0);
+      p.sphere(tubeR, 12, 8);
+      p.pop();
+    }
+  });
 
-  p.push();
-  p.translate(0, -h / 2 + tubeR, 0);
-  p.rotateZ(p.HALF_PI);
-  p.cylinder(tubeR, spanX);
-  p.pop();
+// One merged geometry per frame size: 1 draw call instead of 8 (headless
+// capture runs on software GL, where draw calls are the cost). Sizes are
+// quantised to 1% (≥ 0.5px) so breathing sizes reuse entries; LRU-capped.
+const MAX_CACHED = 600;
+const cache = new Map();
+const quantise = (v, rel, min) => {
+  const step = Math.max(min, Math.abs(v) * rel);
+  return Math.round(v / step) * step;
+};
 
-  p.push();
-  p.translate(0, h / 2 - tubeR, 0);
-  p.rotateZ(p.HALF_PI);
-  p.cylinder(tubeR, spanX);
-  p.pop();
-
-  p.push();
-  p.translate(-w / 2 + tubeR, 0, 0);
-  p.cylinder(tubeR, spanY);
-  p.pop();
-
-  p.push();
-  p.translate(w / 2 - tubeR, 0, 0);
-  p.cylinder(tubeR, spanY);
-  p.pop();
-
-  applyEmissiveGlow(p, c);
-  const corners = [
-    [-hw, -hh, 0],
-    [hw, -hh, 0],
-    [-hw, hh, 0],
-    [hw, hh, 0],
-  ];
-  for (const [x, y, z] of corners) {
-    p.push();
-    p.translate(x, y, z);
-    p.sphere(tubeR, 12, 8);
-    p.pop();
+const frameGeometry = (p, w, h, tubeR) => {
+  const qw = quantise(w, 0.01, 0.5);
+  const qh = quantise(h, 0.01, 0.5);
+  const qr = Math.max(0.05, quantise(tubeR, 0.02, 0.05));
+  const key = `${qw.toFixed(2)}|${qh.toFixed(2)}|${qr.toFixed(3)}`;
+  let geom = cache.get(key);
+  if (geom) {
+    cache.delete(key);
+  } else {
+    geom = buildFrame(p, qw, qh, qr);
+    // Let the current fill/material colour it, not colours baked at build time.
+    geom.clearColors?.();
+    if (cache.size >= MAX_CACHED) {
+      const [oldKey, old] = cache.entries().next().value;
+      cache.delete(oldKey);
+      p.freeGeometry?.(old);
+    }
   }
+  cache.set(key, geom);
+  return geom;
+};
+
+export const drawRectTubeFrame = (p, w, h, tubeR, c) => {
+  if (w <= 2 * tubeR || h <= 2 * tubeR || tubeR <= 0) return;
+  applyEmissiveGlow(p, c);
+  p.model(frameGeometry(p, w, h, tubeR));
 };
