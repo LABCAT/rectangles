@@ -5,13 +5,15 @@ import initCapture from '@labcat2020/p5.audioreactive-capture';
 import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
 import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
 import { getFullWindowGradientCss } from '@sketches/functions/fullWindowGradientCss.js';
-import { readReelParams, applyPart } from '../lib/reelParams.js';
+import { readReelParams, applyPart, randomSeed } from '../lib/reelParams.js';
 import { createNo1Look, NO1_PARTS, NO1_BPM } from '../lib/no1Look.js';
 
 // Reels: ?seed= picks a reproducible variation (rectangle hues, background
 // gradients, swell rates; no seed = a random one, logged to the console);
 // ?part=a|b plays and loops just that part's bars (see NO1_PARTS), and sets
-// p.captureRange so a capture renders just that section.
+// p.captureRange so a capture renders just that section. Prev/next in the
+// control panel switch parts; N / P step the seed, R picks a random one. The
+// address bar follows (?part=&seed=).
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
@@ -255,9 +257,8 @@ const drawBlackFadeRects = (p) => {
 
 const sketch = (p) => {
   const reel = readReelParams(window.location.search);
-  const look = createNo1Look(reel.seed);
+  let look = createNo1Look(reel.seed);
   p.reelSeed = look.seed;
-  console.log(`RectanglesNo1 seed ${look.seed}${reel.part ? ` part ${reel.part}` : ''}`);
 
   p.fft = null;
   p.fftRectColors = null;
@@ -351,7 +352,10 @@ const sketch = (p) => {
     // Frames depend on song time alone (cues, buffer waveform, time-based swell), so a
     // section cut can skip the draws before its start.
     p.captureSeekable = true;
-    partRange = applyPart(p, NO1_PARTS, reel.part, { bpm: NO1_BPM });
+    partRange = applyPart(p, NO1_PARTS, partId, { bpm: NO1_BPM });
+    p.loopAudio = !!partRange;
+    syncUrl();
+    logLook();
     p.randomSeed(look.bgSeed(0));
     applyBgGradient(p);
 
@@ -365,8 +369,19 @@ const sketch = (p) => {
       p.scheduleCueSet(midiData.tracks[1]?.notes ?? [], 'onTrack1Cue');
     }
 
-    const colorGen = new ColorGenerator(p, p.color(look.baseHue, 92, 94));
-    p.fftRectColors = colorGen.getTetradic();
+    p.fftRectColors = rectColors();
+    guardRestart();
+    if (partRange) p._playbackFrozenSec = partRange.start;
+    emitTrack();
+    window.addEventListener('labcat:track-prev', () => stepPart(-1));
+    window.addEventListener('labcat:track-next', () => stepPart(1));
+    window.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'n') stepSeed(1);
+      else if (k === 'p') stepSeed(-1);
+      else if (k === 'r') setSeed(randomSeed());
+    });
 
     p.fft = new p5.FFT();
     if (p.song) {
@@ -376,40 +391,133 @@ const sketch = (p) => {
     }
   };
 
-  // ?part in the browser: play from the part's first bar and loop at its last.
-  // Cues before the part are replayed at once, so the look matches a capture.
-  const playPart = () => {
-    const { start } = partRange;
+  // --- Parts, seeds and the address bar -------------------------------------
+
+  const PART_IDS = Object.keys(NO1_PARTS);
+  const PART_TITLES = { a: 'Part A · groove', b: 'Part B · breakdown' };
+  let partId = NO1_PARTS[reel.part] ? reel.part : null;
+
+  const rectColors = () => new ColorGenerator(p, p.color(look.baseHue, 92, 94)).getTetradic();
+
+  const syncUrl = () => {
+    const q = new URLSearchParams(window.location.search);
+    if (partId) q.set('part', partId);
+    else q.delete('part');
+    q.set('seed', look.seed);
+    window.history.replaceState(null, '', `${window.location.pathname}?${q}`);
+  };
+
+  const emitTrack = () => {
+    const title = partId ? PART_TITLES[partId] ?? `Part ${partId.toUpperCase()}` : 'Full track';
+    window.dispatchEvent(new CustomEvent('labcat:track', { detail: { title } }));
+  };
+
+  const logLook = () =>
+    console.log(`[RectanglesNo1] seed ${look.seed} · ${look.palette} · turn ${look.turn}${partId ? ` · part ${partId}` : ''}`);
+
+  // Rebuild the cue-driven state at song time `t`, as a capture would have it:
+  // reset, then fire every cue before `t` at once.
+  const replayCuesBefore = (t) => {
     resetCueState();
     p.randomSeed(look.bgSeed(0));
     applyBgGradient(p);
-    const before = (p._midiTransportCues ?? []).filter((c) => c.time < start).sort((a, b) => a.time - b.time);
+    const before = (p._midiTransportCues ?? []).filter((c) => c.time < t).sort((a, b) => a.time - b.time);
     for (const { fn, note } of before) fn.call(p, note);
-    if (p.song.isPlaying()) {
-      p._playbackWallStartPerf = performance.now();
-      p._playbackSongSecondsAtWallStart = start;
-      p._reindexMidiCues(start);
-    } else {
-      document.getElementById('play-icon')?.classList.remove('fade-in');
-      p._startSongPlayback(start);
-    }
-    p.song.jump(start);
-    partStarted = true;
   };
-  const togglePlaybackFullSong = p.togglePlayback.bind(p);
-  p.togglePlayback = () => {
-    if (partRange && !partStarted && p.audioLoaded && p.song && !p.captureEnabled) {
-      playPart();
-      return;
+
+  // Tone's Player fires p5.sound's onended for every source that stops, and a
+  // seek stops the old source, so the lib would take a seek for the song
+  // ending. Hold off its restart until that stale event has passed.
+  let restartGuardUntil = 0;
+  const guardRestart = () => {
+    const baseRestart = p._restartSongPlayback;
+    p._restartSongPlayback = function () {
+      if (performance.now() < restartGuardUntil) return;
+      return baseRestart.call(this);
+    };
+  };
+
+  // Make the next play() start the audio at `sec` instead of 0.
+  const startNextPlayAt = (sec) => {
+    const sf = p.song?.soundfile;
+    if (!sf?.start) return;
+    const start = sf.start;
+    sf.start = function (time, offset, duration) {
+      sf.start = start;
+      return start.call(this, time, offset ?? sec, duration);
+    };
+  };
+
+  // Move audio, clock and cue state to `sec`, playing or paused.
+  const jumpTo = (sec) => {
+    replayCuesBefore(sec);
+    const sf = p.song?.soundfile;
+    if (sf?.state === 'started') {
+      restartGuardUntil = performance.now() + 750;
+      sf.seek(sec);
+    } else {
+      startNextPlayAt(sec);
     }
-    togglePlaybackFullSong();
+    if (p.song?.isPlaying()) {
+      p._playbackSongSecondsAtWallStart = sec;
+      p._playbackWallStartPerf = performance.now();
+      p._reindexMidiCues(sec);
+    } else {
+      p._playbackFrozenSec = sec;
+    }
+  };
+
+  const setPart = (id) => {
+    partId = id;
+    partRange = applyPart(p, NO1_PARTS, id, { bpm: NO1_BPM });
+    p.loopAudio = !!partRange;
+    syncUrl();
+    emitTrack();
+    logLook();
+    if (!partRange) return;
+    partStarted = !!p.song?.soundfile && p.song.soundfile.state === 'started';
+    if (partStarted) jumpTo(partRange.start);
+    else p._playbackFrozenSec = partRange.start;
+  };
+
+  const stepPart = (d) => {
+    const i = PART_IDS.indexOf(partId);
+    const next = i < 0 ? (d > 0 ? 0 : PART_IDS.length - 1) : (i + d + PART_IDS.length) % PART_IDS.length;
+    setPart(PART_IDS[next]);
+  };
+
+  // A new seed shows at once: new colours, and the cues so far replayed with it.
+  const setSeed = (next) => {
+    look = createNo1Look(String(next));
+    p.reelSeed = look.seed;
+    if (p.fftRectColors) p.fftRectColors = rectColors();
+    const t = p.getSongPlaybackTime();
+    replayCuesBefore(Number.isFinite(t) ? t : 0);
+    syncUrl();
+    logLook();
+  };
+
+  const stepSeed = (d) => {
+    const n = Number(look.seed);
+    setSeed(Number.isInteger(n) ? Math.max(0, n + d) : randomSeed());
+  };
+
+  const togglePlaybackBase = p.togglePlayback.bind(p);
+  p.togglePlayback = () => {
+    if (partRange && !partStarted && p.audioLoaded && p.song && !p.captureEnabled && !p.song.isPlaying()) {
+      partStarted = true;
+      replayCuesBefore(partRange.start);
+      p._playbackFrozenSec = partRange.start;
+      startNextPlayAt(partRange.start);
+    }
+    togglePlaybackBase();
   };
 
   p.draw = () => {
     if (!p.fft) return;
 
-    if (partRange && partStarted && !p.captureInProgress && p.song?.isPlaying() && p.getSongPlaybackTime() >= partRange.end) {
-      playPart();
+    if (partRange && !p.captureInProgress && p.song?.isPlaying() && p.getSongPlaybackTime() >= partRange.end) {
+      jumpTo(partRange.start);
     }
 
     p.clear();
