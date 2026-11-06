@@ -272,15 +272,15 @@ const sketch = (p) => {
 
   p.setup = async () => {
     p.pixelDensity(1);
-    // FPS badge — bottom-left; on by default, ?fps=0 to hide, window.toggleFps() / press F
+    // FPS badge — in the control panel (open it to see it); on by default, ?fps=0 to hide, window.toggleFps() / press F
     const params = new URLSearchParams(window.location.search);
     const wantsFps = !params.has('fps') || params.get('fps') !== '0';
-    if (wantsFps) p.enableFpsIndicator({ position: 'bottom-left' });
-    window.toggleFps = (opts) => p.toggleFpsIndicator({ position: 'bottom-left', ...opts });
+    if (wantsFps) p.enableFpsIndicator();
+    window.toggleFps = (opts) => p.toggleFpsIndicator(opts);
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === 'f') p.toggleFpsIndicator({ position: 'bottom-left' });
+      if (k === 'f') p.toggleFpsIndicator();
       else if (k === 'n') stepSeed(1);
       else if (k === 'p') stepSeed(-1);
       else if (k === 'r') setSeed(randomSeed());
