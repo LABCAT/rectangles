@@ -19,16 +19,15 @@ import { createRng, seedToInt } from './reelParams.js';
 export const NO1_BPM = 156;
 
 /**
- * Reel parts, bar ranges (1-based, inclusive) on the track's 4-bar phrases
- * (1 bar = 1.538s). The drums play bars 1–24 and drop out at bar 25; each
- * phrase ends on a long bass note (bars 4, 8, …, 32) that swells the rectangles.
+ * Reel parts, bar ranges (1-based, inclusive). The track has two sections: the
+ * full groove (bars 1–24, drums in) and the breakdown (bars 25–32, drums out).
+ * The groove runs 36.9s, so part A takes its first 8 bars (1 bar = 1.538s).
  */
 export const NO1_PARTS = {
-  a: { bars: [1, 8] }, // 0.00–12.31s  opening: the full groove from the downbeat, two swells
-  b: { bars: [13, 16] }, // 18.46–24.62s  one mid-groove phrase into a swell
-  c: { bars: [21, 28] }, // 30.77–43.08s  the drums drop out at bar 25, bass carries on
-  d: { bars: [29, 32] }, // 43.08–49.23s  the last phrase and the final, longest swell
+  a: { bars: [1, 8] }, // 0.00–12.31s  the groove from the downbeat, two swells
+  b: { bars: [25, 32] }, // 36.92–49.23s  the breakdown: drums out, bass to the final swell
 };
+
 const HUE_NAMES = ['red', 'orange', 'yellow', 'lime', 'green', 'teal', 'cyan', 'azure', 'blue', 'violet', 'magenta', 'pink'];
 
 /**

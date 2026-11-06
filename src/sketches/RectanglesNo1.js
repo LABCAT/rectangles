@@ -10,7 +10,7 @@ import { createNo1Look, NO1_PARTS, NO1_BPM } from '../lib/no1Look.js';
 
 // Reels: ?seed= picks a reproducible variation (rectangle hues, background
 // gradients, swell rates; no seed = a random one, logged to the console);
-// ?part=a|b|c|d plays and loops just that part's bars (see NO1_PARTS), and sets
+// ?part=a|b plays and loops just that part's bars (see NO1_PARTS), and sets
 // p.captureRange so a capture renders just that section.
 
 const base = import.meta.env.BASE_URL || './';
