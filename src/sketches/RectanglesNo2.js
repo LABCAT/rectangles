@@ -100,7 +100,8 @@ const sketch = (p) => {
   let seed = reel.seed;
   let look = createNo2Look(seed, { bpm: motionBpm, beats: reel.beats, speed: reel.speed });
   let ev = null;
-  // The live part (prev/next in the control panel walk them; it loops).
+  // The live part (prev/next in the control panel walk them; playing on flows
+  // into the next, and after the last back to the first).
   // `?part=` also sets the capture range; parts picked live don't.
   const PART_IDS = Object.keys(NO2_PARTS);
   let partId = NO2_PARTS[reel.part] ? reel.part : PART_IDS[0];
@@ -214,11 +215,17 @@ const sketch = (p) => {
     window.dispatchEvent(new CustomEvent('labcat:track', { detail: { title } }));
   };
 
-  const setPart = (id) => {
+  // Follow the music into part `id` without moving the playhead.
+  const flowInto = (id) => {
     partId = id;
     partRange = resolvePart(NO2_PARTS, id, { bpm: TRACK_BPM });
     syncUrl();
     emitTrack();
+  };
+
+  // Jump to the start of part `id`.
+  const setPart = (id) => {
+    flowInto(id);
     if (partRange) jumpTo(partRange.start);
   };
 
@@ -679,9 +686,12 @@ const sketch = (p) => {
     p.clear();
     if (!ev) return;
 
-    // Live: the part loops.
+    // Live: play on into the next part (parts sit back to back, so the audio
+    // just carries on); after the last, back to the first.
     if (partRange && !p.captureInProgress && p.song?.isPlaying() && t >= partRange.end) {
-      jumpTo(partRange.start);
+      const i = PART_IDS.indexOf(partId);
+      if (i < PART_IDS.length - 1) flowInto(PART_IDS[i + 1]);
+      else setPart(PART_IDS[0]);
     }
 
     drawBackground(t);
