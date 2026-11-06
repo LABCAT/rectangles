@@ -104,6 +104,8 @@ const sketch = (p) => {
   // into the next, and after the last back to the first).
   // `?part=` also sets the capture range; parts picked live don't.
   const PART_IDS = Object.keys(NO2_PARTS);
+  /** Next after the last part: the series' next sketch. */
+  const NEXT_SKETCH_URL = `${base}number-3/?part=a`;
   let partId = NO2_PARTS[reel.part] ? reel.part : PART_IDS[0];
   let partRange = null;
   let partStarted = false;
@@ -229,10 +231,14 @@ const sketch = (p) => {
     if (partRange) jumpTo(partRange.start);
   };
 
-  // Prev on the first part and next on the last restart that part.
+  // Prev on the first part restarts it; next on the last goes to RectanglesNo3.
   const stepPart = (d) => {
-    const i = Math.min(PART_IDS.length - 1, Math.max(0, PART_IDS.indexOf(partId) + d));
-    setPart(PART_IDS[i]);
+    const n = PART_IDS.indexOf(partId) + d;
+    if (n >= PART_IDS.length) {
+      window.location.assign(NEXT_SKETCH_URL);
+      return;
+    }
+    setPart(PART_IDS[Math.max(0, n)]);
   };
 
   const timeNow = () => {
@@ -689,7 +695,7 @@ const sketch = (p) => {
     if (partRange && !p.captureInProgress && p.song?.isPlaying() && t >= partRange.end) {
       const i = PART_IDS.indexOf(partId);
       if (i < PART_IDS.length - 1) flowInto(PART_IDS[i + 1]);
-      else setPart(PART_IDS[0]);
+      else window.location.assign(NEXT_SKETCH_URL);
     }
 
     drawBackground(t);
