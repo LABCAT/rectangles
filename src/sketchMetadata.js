@@ -3,6 +3,8 @@ export const sketchMetadata = {
     title: '#RectanglesNo1',
     description: 'A centered rectangle.',
     sketch: 'RectanglesNo1.js',
+    // Prev/next in the control panel walk the reel parts (a, b).
+    trackNav: true,
   },
   'number-2': {
     title: '#RectanglesNo2',
