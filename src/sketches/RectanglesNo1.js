@@ -12,8 +12,10 @@ import { createNo1Look, NO1_PARTS, NO1_BPM } from '../lib/no1Look.js';
 // gradients, swell rates; no seed = a random one, logged to the console);
 // ?part=a|b plays and loops just that part's bars (see NO1_PARTS), and sets
 // p.captureRange so a capture renders just that section. Prev/next in the
-// control panel switch parts; N / P step the seed, R picks a random one. The
-// address bar follows (?part=&seed=).
+// control panel walk the parts, and next on the last part goes on to
+// RectanglesNo2. With no ?part the page plays part A (a capture without ?part
+// still renders the whole track). N / P step the seed, R picks a random one.
+// The address bar follows (?part=&seed=).
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
@@ -353,6 +355,8 @@ const sketch = (p) => {
     // section cut can skip the draws before its start.
     p.captureSeekable = true;
     partRange = applyPart(p, NO1_PARTS, partId, { bpm: NO1_BPM });
+    // Live play defaults to part A; a capture only narrows to a part ?part names.
+    if (!reel.part) p.captureRange = null;
     p.loopAudio = !!partRange;
     syncUrl();
     logLook();
@@ -395,7 +399,9 @@ const sketch = (p) => {
 
   const PART_IDS = Object.keys(NO1_PARTS);
   const PART_TITLES = { a: 'Part A · groove', b: 'Part B · breakdown' };
-  let partId = NO1_PARTS[reel.part] ? reel.part : null;
+  let partId = NO1_PARTS[reel.part] ? reel.part : PART_IDS[0];
+  /** Next after the last part: the series' next sketch. */
+  const NEXT_SKETCH_URL = `${base}number-2/?part=a`;
 
   const rectColors = () => new ColorGenerator(p, p.color(look.baseHue, 92, 94)).getTetradic();
 
@@ -408,7 +414,7 @@ const sketch = (p) => {
   };
 
   const emitTrack = () => {
-    const title = partId ? PART_TITLES[partId] ?? `Part ${partId.toUpperCase()}` : 'Full track';
+    const title = PART_TITLES[partId] ?? `Part ${partId.toUpperCase()}`;
     window.dispatchEvent(new CustomEvent('labcat:track', { detail: { title } }));
   };
 
@@ -480,10 +486,14 @@ const sketch = (p) => {
     else p._playbackFrozenSec = partRange.start;
   };
 
+  // Prev on the first part restarts it; next on the last goes to RectanglesNo2.
   const stepPart = (d) => {
-    const i = PART_IDS.indexOf(partId);
-    const next = i < 0 ? (d > 0 ? 0 : PART_IDS.length - 1) : (i + d + PART_IDS.length) % PART_IDS.length;
-    setPart(PART_IDS[next]);
+    const next = PART_IDS.indexOf(partId) + d;
+    if (next >= PART_IDS.length) {
+      window.location.assign(NEXT_SKETCH_URL);
+      return;
+    }
+    setPart(PART_IDS[Math.max(0, next)]);
   };
 
   // A new seed shows at once: new colours, and the cues so far replayed with it.
