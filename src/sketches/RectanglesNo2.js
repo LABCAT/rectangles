@@ -4,7 +4,7 @@ import '../lib/p5.fps.js';
 import initCapture from '@labcat2020/p5.audioreactive-capture';
 import { drawRectTubeFrame } from './functions/drawRectTubeFrame.js';
 import { paintNo2Background } from './functions/no2BackgroundGradientCss.js';
-import { readReelParams, applyPart, randomSeed } from '../lib/reelParams.js';
+import { readReelParams, applyPart, resolvePart, randomSeed } from '../lib/reelParams.js';
 import { createNo2Look, melodyHue, pitchClassHue, hsbToRgb, TRACK_BPM, NO2_PARTS } from '../lib/no2Look.js';
 
 /**
@@ -100,6 +100,10 @@ const sketch = (p) => {
   let seed = reel.seed;
   let look = createNo2Look(seed, { bpm: motionBpm, beats: reel.beats, speed: reel.speed });
   let ev = null;
+  // The live part (prev/next in the control panel walk them; it loops).
+  // `?part=` also sets the capture range; parts picked live don't.
+  const PART_IDS = Object.keys(NO2_PARTS);
+  let partId = NO2_PARTS[reel.part] ? reel.part : PART_IDS[0];
   let partRange = null;
   let partStarted = false;
   let bgIdx = -2;
@@ -115,6 +119,8 @@ const sketch = (p) => {
 
   const syncUrl = () => {
     const q = new URLSearchParams(window.location.search);
+    if (partId) q.set('part', partId);
+    else q.delete('part');
     q.set('seed', seed);
     window.history.replaceState(null, '', `${window.location.pathname}?${q}`);
   };
@@ -134,47 +140,27 @@ const sketch = (p) => {
     setSeed(Number.isInteger(n) ? Math.max(0, n + d) : randomSeed());
   };
 
-  // Live preview of a part: start on it and loop it (capture handles its own range).
-  //
-  // Tone's Player calls p5.sound's onended for EVERY source that ends — a
-  // seek stops the old source, so the lib would take it as the song ending
-  // and restart from 0 (and each restart's stop() fires it again). So: the
-  // first play starts the source at the part's offset (nothing is stopped),
-  // and the loop's seek holds off the lib's restart until the stale end
-  // event has passed.
-  let restartGuardUntil = 0;
+  // Live parts. Tone's Player calls p5.sound's onended (its onstop) for EVERY
+  // source that ends — a seek stops the old source, so the lib would take it
+  // as the song ending and restart from 0 (and each restart's stop() fires it
+  // again, forever). The stale event can land >1s late on a busy machine, so
+  // a timer can't fence it: each seek stops exactly one source, so count them
+  // and swallow that many onstops. Before the first play there is no source;
+  // it just starts at the part's offset.
+  let staleStops = 0;
 
-  const guardRestart = () => {
-    if (p._no2RestartGuarded) return;
-    p._no2RestartGuarded = true;
-    const baseRestart = p._restartSongPlayback;
-    p._restartSongPlayback = function () {
-      if (performance.now() < restartGuardUntil) return;
-      return baseRestart.call(this);
+  const guardStaleStops = () => {
+    const sf = p.song?.soundfile;
+    if (!sf || sf._no2Guarded) return;
+    sf._no2Guarded = true;
+    const libOnStop = sf.onstop;
+    sf.onstop = function (...args) {
+      if (staleStops > 0) {
+        staleStops--;
+        return;
+      }
+      return libOnStop?.apply(this, args);
     };
-  };
-
-  const resetClock = (sec) => {
-    p._playbackSongSecondsAtWallStart = sec;
-    p._playbackWallStartPerf = performance.now();
-    p._reindexMidiCues?.(sec);
-  };
-
-  const seekTo = (sec) => {
-    if (!p.song) return;
-    if (!p.song.isPlaying()) {
-      p._playbackFrozenSec = sec;
-      return;
-    }
-    guardRestart();
-    restartGuardUntil = performance.now() + 750;
-    try {
-      p.song.soundfile.seek(sec);
-    } catch (e) {
-      console.warn('[RectanglesNo2] seek failed', e);
-      return;
-    }
-    resetClock(sec);
   };
 
   // Make the next play() start the audio at `sec` instead of 0.
@@ -186,6 +172,60 @@ const sketch = (p) => {
       sf.start = start;
       return start.call(this, time, offset ?? sec, duration);
     };
+  };
+
+  // Move audio and clock to `sec`, playing or paused. Frames are drawn from
+  // song time alone, so there is no cue state to rebuild.
+  const jumpTo = (sec) => {
+    const sf = p.song?.soundfile;
+    if (!sf) return;
+    if (sf.state === 'started' && p.song.isPlaying()) {
+      const sources = sf._activeSources?.size ?? 1;
+      try {
+        sf.seek(sec);
+        staleStops += sources;
+      } catch (e) {
+        console.warn('[RectanglesNo2] seek failed', e);
+      }
+    } else if (sf.state === 'started') {
+      // Paused (p5.sound pauses at rate 0): a seek would start a zero-rate
+      // source that Tone ends at once. Stop cleanly; the next play starts
+      // fresh at `sec`.
+      staleStops += sf._activeSources?.size ?? 1;
+      sf.stop();
+      p.song.paused = false;
+      p.song.playing = false;
+      startNextPlayAt(sec);
+    } else {
+      startNextPlayAt(sec);
+      partStarted = true;
+    }
+    if (p.song.isPlaying()) {
+      p._playbackSongSecondsAtWallStart = sec;
+      p._playbackWallStartPerf = performance.now();
+      p._reindexMidiCues?.(sec);
+    } else {
+      p._playbackFrozenSec = sec;
+    }
+  };
+
+  const emitTrack = () => {
+    const title = partId ? `Part ${partId.toUpperCase()} · ${NO2_PARTS[partId].title}` : '';
+    window.dispatchEvent(new CustomEvent('labcat:track', { detail: { title } }));
+  };
+
+  const setPart = (id) => {
+    partId = id;
+    partRange = resolvePart(NO2_PARTS, id, { bpm: TRACK_BPM });
+    syncUrl();
+    emitTrack();
+    if (partRange) jumpTo(partRange.start);
+  };
+
+  // Prev on the first part and next on the last restart that part.
+  const stepPart = (d) => {
+    const i = Math.min(PART_IDS.length - 1, Math.max(0, PART_IDS.indexOf(partId) + d));
+    setPart(PART_IDS[i]);
   };
 
   const timeNow = () => {
@@ -287,12 +327,18 @@ const sketch = (p) => {
       p.fft.gain.toDestination();
     }
 
-    // ?part= → p.captureRange (capture renders just that part; live preview starts on it).
-    partRange = applyPart(p, NO2_PARTS, reel.part, { bpm: TRACK_BPM });
+    // ?part= → p.captureRange (capture renders just that part).
+    applyPart(p, NO2_PARTS, reel.part, { bpm: TRACK_BPM });
+    // Live: start on the part (?part= or the first) and loop it.
+    partRange = resolvePart(NO2_PARTS, partId, { bpm: TRACK_BPM });
     if (partRange) p._playbackFrozenSec = partRange.start;
+    guardStaleStops();
+    emitTrack();
+    window.addEventListener('labcat:track-prev', () => stepPart(-1));
+    window.addEventListener('labcat:track-next', () => stepPart(1));
 
-    // The first play of a part starts the audio (and the clock, via the
-    // frozen time) on it. The play overlay calls togglePlayback directly.
+    // The first play starts the audio (and the clock, via the frozen time)
+    // on the part. The play button calls togglePlayback directly.
     const baseToggle = p.togglePlayback;
     p.togglePlayback = function () {
       const first = partRange && !partStarted && !this.captureEnabled && this.audioLoaded && !this.song?.isPlaying();
@@ -633,9 +679,9 @@ const sketch = (p) => {
     p.clear();
     if (!ev) return;
 
-    // Live part preview loops its part.
+    // Live: the part loops.
     if (partRange && !p.captureInProgress && p.song?.isPlaying() && t >= partRange.end) {
-      seekTo(partRange.start);
+      jumpTo(partRange.start);
     }
 
     drawBackground(t);

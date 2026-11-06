@@ -24,10 +24,10 @@ export const TRACK_BPM = 115;
  *   d  bars 25–33  breakdown  18.8s  drums out, corridor + hero, fade to black
  */
 export const NO2_PARTS = {
-  a: { bars: [5, 12] },
-  b: { bars: [13, 16] },
-  c: { bars: [17, 24] },
-  d: { bars: [25, 33] },
+  a: { bars: [5, 12], title: 'Build' },
+  b: { bars: [13, 16], title: 'Drop' },
+  c: { bars: [17, 24], title: 'Peak' },
+  d: { bars: [25, 33], title: 'Breakdown' },
 };
 
 const wrapHue = (h) => ((h % 360) + 360) % 360;
