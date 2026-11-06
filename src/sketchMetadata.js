@@ -10,6 +10,7 @@ export const sketchMetadata = {
     title: '#RectanglesNo2',
     description: 'WebGL torus.',
     sketch: 'RectanglesNo2.js',
+    trackNav: true,
   },
   'number-3': {
     title: '#RectanglesNo3',
