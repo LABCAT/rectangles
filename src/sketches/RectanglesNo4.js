@@ -3,8 +3,8 @@ import '@lib/p5.audioReact.js';
 import '../lib/p5.fps.js';
 
 const base = import.meta.env.BASE_URL || './';
-const audioUrl = base + 'audio/RectanglesNo3.mp3';
-const midiUrl = base + 'audio/RectanglesNo3.mid';
+const audioUrl = base + 'audio/RectanglesNo4.mp3';
+const midiUrl = base + 'audio/RectanglesNo4.mid';
 
 const sketch = (p) => {
   p.loopAudio = true;
