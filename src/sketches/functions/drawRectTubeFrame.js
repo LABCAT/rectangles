@@ -7,6 +7,13 @@ const applyEmissiveGlow = (p, c) => {
   p.fill(c);
 };
 
+// Tubes are split into short segments: one long thin triangle per side
+// rasterises its whole (rotated) bounding box on software GL, which made
+// big frames cost seconds a frame headless. 10 sides read as round at
+// these widths.
+const SIDES = 10;
+const segments = (span, tubeR) => Math.max(1, Math.min(64, Math.round(span / (tubeR * 6))));
+
 // Four tubes + four corner spheres, in the frame's own XY plane.
 const buildFrame = (p, w, h, tubeR) =>
   p.buildGeometry(() => {
@@ -18,13 +25,13 @@ const buildFrame = (p, w, h, tubeR) =>
       p.push();
       p.translate(0, y, 0);
       p.rotateZ(p.HALF_PI);
-      p.cylinder(tubeR, spanX);
+      p.cylinder(tubeR, spanX, SIDES, segments(spanX, tubeR), false, false);
       p.pop();
     }
     for (const x of [-hw, hw]) {
       p.push();
       p.translate(x, 0, 0);
-      p.cylinder(tubeR, spanY);
+      p.cylinder(tubeR, spanY, SIDES, segments(spanY, tubeR), false, false);
       p.pop();
     }
     for (const [x, y] of [
@@ -35,31 +42,34 @@ const buildFrame = (p, w, h, tubeR) =>
     ]) {
       p.push();
       p.translate(x, y, 0);
-      p.sphere(tubeR, 12, 8);
+      p.sphere(tubeR, SIDES, 6);
       p.pop();
     }
   });
 
-// One merged geometry per frame size: 1 draw call instead of 8 (headless
-// capture runs on software GL, where draw calls are the cost). Sizes are
-// quantised to 1% (≥ 0.5px) so breathing sizes reuse entries; LRU-capped.
-const MAX_CACHED = 600;
+// One merged geometry per frame SHAPE: 1 draw call instead of 8 (headless
+// capture runs on software GL, where draw calls are the cost). The cache keys
+// on aspect (0.5% steps) and tube-to-size ratio (3% steps), builds at a
+// reference size and scales uniformly — so a frame that breathes in size
+// reuses one entry instead of rebuilding every frame. LRU-capped.
+const REF = 100;
+const MAX_CACHED = 400;
 const cache = new Map();
-const quantise = (v, rel, min) => {
-  const step = Math.max(min, Math.abs(v) * rel);
-  return Math.round(v / step) * step;
-};
+const LOG_ASPECT = Math.log(1.005);
+const LOG_RATIO = Math.log(1.03);
+const step = (v, logStep) => Math.round(Math.log(v) / logStep);
 
-const frameGeometry = (p, w, h, tubeR) => {
-  const qw = quantise(w, 0.01, 0.5);
-  const qh = quantise(h, 0.01, 0.5);
-  const qr = Math.max(0.05, quantise(tubeR, 0.02, 0.05));
-  const key = `${qw.toFixed(2)}|${qh.toFixed(2)}|${qr.toFixed(3)}`;
+const frameGeometry = (p, aspectKey, ratioKey) => {
+  const key = `${aspectKey}|${ratioKey}`;
   let geom = cache.get(key);
   if (geom) {
     cache.delete(key);
   } else {
-    geom = buildFrame(p, qw, qh, qr);
+    const aspect = Math.exp(aspectKey * LOG_ASPECT); // w / h
+    const ratio = Math.exp(ratioKey * LOG_RATIO); // tubeR / min(w, h)
+    const w = aspect >= 1 ? REF * aspect : REF;
+    const h = aspect >= 1 ? REF : REF / aspect;
+    geom = buildFrame(p, w, h, ratio * REF);
     // Let the current fill/material colour it, not colours baked at build time.
     geom.clearColors?.();
     if (cache.size >= MAX_CACHED) {
@@ -74,6 +84,13 @@ const frameGeometry = (p, w, h, tubeR) => {
 
 export const drawRectTubeFrame = (p, w, h, tubeR, c) => {
   if (w <= 2 * tubeR || h <= 2 * tubeR || tubeR <= 0) return;
+  const side = Math.min(w, h);
+  const aspectKey = step(w / h, LOG_ASPECT);
+  // Clamp below a half-side so the quantised tube always fits the frame.
+  const ratioKey = Math.min(step(tubeR / side, LOG_RATIO), step(0.45, LOG_RATIO));
   applyEmissiveGlow(p, c);
-  p.model(frameGeometry(p, w, h, tubeR));
+  p.push();
+  p.scale(side / REF);
+  p.model(frameGeometry(p, aspectKey, ratioKey));
+  p.pop();
 };

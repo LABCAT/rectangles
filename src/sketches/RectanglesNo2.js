@@ -2,10 +2,8 @@ import p5 from 'p5';
 import '@lib/p5.audioReact.js';
 import '../lib/p5.fps.js';
 import initCapture from '@labcat2020/p5.audioreactive-capture';
-import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
-import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
 import { drawRectTubeFrame } from './functions/drawRectTubeFrame.js';
-import { getNo2BackgroundGradientCss } from './functions/no2BackgroundGradientCss.js';
+import { paintNo2Background } from './functions/no2BackgroundGradientCss.js';
 import { readReelParams, applyPart, randomSeed } from '../lib/reelParams.js';
 import { createNo2Look, melodyHue, pitchClassHue, hsbToRgb, TRACK_BPM, NO2_PARTS } from '../lib/no2Look.js';
 
@@ -109,9 +107,11 @@ const sketch = (p) => {
   p.loopAudio = true;
   p.captureSeekable = true;
   p.fft = null;
-  p.bgGradientEl = null;
-  p.bgBlackoutEl = null;
-  p.bgWrapperEl = null;
+  // Background gradients live in the WebGL canvas (a quarter-res texture), so
+  // the canvas is the whole frame: capture needs no DOM compositing and can
+  // use the fast data-URL path.
+  let bgG = null; // p5.Graphics: the composed background texture
+  let bgGrad = null; // offscreen canvas: the current gradient, repainted per hit
 
   const syncUrl = () => {
     const q = new URLSearchParams(window.location.search);
@@ -160,13 +160,38 @@ const sketch = (p) => {
 
   const rgb = (c, k = 1) => p.color(c[0] * k, c[1] * k, c[2] * k);
 
+  const BG_SCALE = 4;
+
   const applyBackground = (idx) => {
-    if (idx === bgIdx || !p.bgGradientEl) return;
+    const w = Math.max(2, Math.ceil(p.width / BG_SCALE));
+    const h = Math.max(2, Math.ceil(p.height / BG_SCALE));
+    if (!bgG || bgG.width !== w || bgG.height !== h) {
+      bgG?.remove?.();
+      bgG = p.createGraphics(w, h);
+      bgG.pixelDensity(1);
+      bgGrad = document.createElement('canvas');
+      bgGrad.width = w;
+      bgGrad.height = h;
+      bgIdx = -2;
+    }
+    if (idx === bgIdx) return;
     bgIdx = idx;
-    const { background, backgroundBlendMode } =
-      idx < 0 ? { background: '#000', backgroundBlendMode: 'normal' } : getNo2BackgroundGradientCss(look, idx);
-    p.bgGradientEl.style.background = background;
-    p.bgGradientEl.style.backgroundBlendMode = backgroundBlendMode;
+    paintNo2Background(bgGrad.getContext('2d'), w, h, look, idx);
+  };
+
+  // One full-screen pass a frame (fill is the cost on software GL): darken
+  // the cached gradient into the small texture, then draw it once.
+  const composeBackground = (opacity) => {
+    const ctx = bgG.drawingContext;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'copy';
+    ctx.drawImage(bgGrad, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = `rgba(0,0,0,${opacity})`;
+    ctx.fillRect(0, 0, bgGrad.width, bgGrad.height);
+    ctx.restore();
   };
 
   p.setup = async () => {
@@ -185,32 +210,13 @@ const sketch = (p) => {
       else if (k === 'r') setSeed(randomSeed());
     });
 
-    const bgWrap = document.createElement('div');
-    bgWrap.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;';
-    bgWrap.setAttribute('data-capture-bg', '');
-    p.bgGradientEl = document.createElement('div');
-    p.bgGradientEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;background:#000;';
-    p.bgBlackoutEl = document.createElement('div');
-    p.bgBlackoutEl.style.cssText =
-      'position:absolute;inset:0;width:100%;height:100%;background:#000;opacity:1;';
-    bgWrap.appendChild(p.bgGradientEl);
-    bgWrap.appendChild(p.bgBlackoutEl);
-    document.body.insertBefore(bgWrap, document.body.firstChild);
-    p.bgWrapperEl = bgWrap;
-
     p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
     p.canvas.style.position = 'relative';
     p.canvas.style.zIndex = '2';
 
-    // Headless capture composites the CSS background layers behind the canvas.
-    initCapture(p, {
-      prefix: 'RectanglesNo2',
-      enabled: false,
-      captureCSSBackground: true,
-      extension: compositeDomCaptureExtension({
-        background: createDomLayerCaptureBackground(p.bgWrapperEl),
-      }),
-    });
+    // The canvas holds the whole frame (background included), so capture
+    // reads it directly — no CSS layers to composite.
+    initCapture(p, { prefix: 'RectanglesNo2', enabled: false });
 
     setSeed(seed);
 
@@ -264,8 +270,6 @@ const sketch = (p) => {
   // --- Layers --------------------------------------------------------------
 
   const drawBackground = (t) => {
-    const el = p.bgBlackoutEl;
-    if (!el) return;
     const i = lastAt(ev.bgHits, t);
     applyBackground(i);
     let opacity = 1;
@@ -278,7 +282,19 @@ const sketch = (p) => {
     }
     // Outro: back to black over the bar after the last hero note.
     opacity = Math.max(opacity, clamp01((t - ev.heroEnd) / barSec));
-    el.style.opacity = String(opacity);
+    // Gradient quad + black sheet, unlit (lights come after), then clear the
+    // depth so the tunnel draws over it.
+    if (opacity >= 0.999) {
+      p.background(0);
+      return;
+    }
+    composeBackground(opacity);
+    p.push();
+    p.noStroke();
+    p.imageMode(p.CORNER);
+    p.image(bgG, -p.width / 2, -p.height / 2, p.width, p.height);
+    p.pop();
+    p.clearDepth();
   };
 
   const drawFlyers = (t, s, zStart, zDeep) => {
