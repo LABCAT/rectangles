@@ -20,14 +20,16 @@ export const TRACK_BPM = 115;
  * Reel parts on bar lines (1-based, inclusive; 115 bpm → 2.087s a bar):
  *   a  bars  5–12  build      16.7s  drum lanes + melody slams opening up
  *   b  bars 13–16  drop        8.3s  the hero lead lights up dead centre
- *   c  bars 17–24  peak       16.7s  Synth 1 torus + Fifth Drops corridor, everything on
- *   d  bars 25–33  breakdown  18.8s  drums out, corridor + hero, fade to black
+ *   c  bars 17–20  ring        8.3s  Synth 1 torus spins up round the hero, Fifth Drops joins on bar 20
+ *   d  bars 21–24  peak        8.3s  torus + corridor + hero + drums, everything on
+ *   e  bars 25–33  breakdown  18.8s  drums out, corridor + hero, fade to black
  */
 export const NO2_PARTS = {
   a: { bars: [5, 12], title: 'Build' },
   b: { bars: [13, 16], title: 'Drop' },
-  c: { bars: [17, 24], title: 'Peak' },
-  d: { bars: [25, 33], title: 'Breakdown' },
+  c: { bars: [17, 20], title: 'Ring' },
+  d: { bars: [21, 24], title: 'Peak' },
+  e: { bars: [25, 33], title: 'Breakdown' },
 };
 
 const wrapHue = (h) => ((h % 360) + 360) % 360;
