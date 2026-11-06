@@ -10,8 +10,8 @@ import { createNo1Look, NO1_PARTS, NO1_BPM } from '../lib/no1Look.js';
 
 // Reels: ?seed= picks a reproducible variation (rectangle hues, background
 // gradients, swell rates; no seed = a random one, logged to the console);
-// ?part=a|b|c|d sets p.captureRange to that part's bars (see NO1_PARTS) so a
-// capture renders just that section.
+// ?part=a|b|c|d plays and loops just that part's bars (see NO1_PARTS), and sets
+// p.captureRange so a capture renders just that section.
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
@@ -262,12 +262,19 @@ const sketch = (p) => {
   p.fft = null;
   p.fftRectColors = null;
   p.bgGradientEl = null;
-  p.blackFade = { startSec: 0, durationSec: 0 };
-  p.fftRectGateStartSec = [0, 0, 0, 0];
-  p.fftRectGateEndSec = [0, 0, 0, 0];
-  p.fftRectGrowHalfSide = [null, null, null, null];
-  p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
-  p.fftRectGrowStartSec = [0, 0, 0, 0];
+  /** Cue-driven state, as it is before the first note. */
+  const resetCueState = () => {
+    p.blackFade = { startSec: 0, durationSec: 0 };
+    p.fftRectGateStartSec = [0, 0, 0, 0];
+    p.fftRectGateEndSec = [0, 0, 0, 0];
+    p.fftRectGrowHalfSide = [null, null, null, null];
+    p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
+    p.fftRectGrowStartSec = [0, 0, 0, 0];
+  };
+  resetCueState();
+  /** ?part's { start, end } in seconds (set in setup), and whether it has started playing. */
+  let partRange = null;
+  let partStarted = false;
 
   p.onTrack11Cue = function (note) {
     const s = note.time;
@@ -308,7 +315,8 @@ const sketch = (p) => {
           ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
           : 0.5)
     );
-    const t = p.getSongPlaybackTime();
+    // The chord's own time (not the clock), so cues replayed ahead of a part land the same.
+    const t = Number.isFinite(note.time) ? note.time : p.getSongPlaybackTime();
     if (Number.isFinite(t)) {
       p.blackFade = { startSec: t, durationSec };
     }
@@ -343,7 +351,7 @@ const sketch = (p) => {
     // Frames depend on song time alone (cues, buffer waveform, time-based swell), so a
     // section cut can skip the draws before its start.
     p.captureSeekable = true;
-    applyPart(p, NO1_PARTS, reel.part, { bpm: NO1_BPM });
+    partRange = applyPart(p, NO1_PARTS, reel.part, { bpm: NO1_BPM });
     p.randomSeed(look.bgSeed(0));
     applyBgGradient(p);
 
@@ -368,8 +376,41 @@ const sketch = (p) => {
     }
   };
 
+  // ?part in the browser: play from the part's first bar and loop at its last.
+  // Cues before the part are replayed at once, so the look matches a capture.
+  const playPart = () => {
+    const { start } = partRange;
+    resetCueState();
+    p.randomSeed(look.bgSeed(0));
+    applyBgGradient(p);
+    const before = (p._midiTransportCues ?? []).filter((c) => c.time < start).sort((a, b) => a.time - b.time);
+    for (const { fn, note } of before) fn.call(p, note);
+    if (p.song.isPlaying()) {
+      p._playbackWallStartPerf = performance.now();
+      p._playbackSongSecondsAtWallStart = start;
+      p._reindexMidiCues(start);
+    } else {
+      document.getElementById('play-icon')?.classList.remove('fade-in');
+      p._startSongPlayback(start);
+    }
+    p.song.jump(start);
+    partStarted = true;
+  };
+  const togglePlaybackFullSong = p.togglePlayback.bind(p);
+  p.togglePlayback = () => {
+    if (partRange && !partStarted && p.audioLoaded && p.song && !p.captureEnabled) {
+      playPart();
+      return;
+    }
+    togglePlaybackFullSong();
+  };
+
   p.draw = () => {
     if (!p.fft) return;
+
+    if (partRange && partStarted && !p.captureInProgress && p.song?.isPlaying() && p.getSongPlaybackTime() >= partRange.end) {
+      playPart();
+    }
 
     p.clear();
 
