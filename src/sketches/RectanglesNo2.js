@@ -135,21 +135,57 @@ const sketch = (p) => {
   };
 
   // Live preview of a part: start on it and loop it (capture handles its own range).
+  //
+  // Tone's Player calls p5.sound's onended for EVERY source that ends — a
+  // seek stops the old source, so the lib would take it as the song ending
+  // and restart from 0 (and each restart's stop() fires it again). So: the
+  // first play starts the source at the part's offset (nothing is stopped),
+  // and the loop's seek holds off the lib's restart until the stale end
+  // event has passed.
+  let restartGuardUntil = 0;
+
+  const guardRestart = () => {
+    if (p._no2RestartGuarded) return;
+    p._no2RestartGuarded = true;
+    const baseRestart = p._restartSongPlayback;
+    p._restartSongPlayback = function () {
+      if (performance.now() < restartGuardUntil) return;
+      return baseRestart.call(this);
+    };
+  };
+
+  const resetClock = (sec) => {
+    p._playbackSongSecondsAtWallStart = sec;
+    p._playbackWallStartPerf = performance.now();
+    p._reindexMidiCues?.(sec);
+  };
+
   const seekTo = (sec) => {
     if (!p.song) return;
-    if (p.song.isPlaying()) {
-      try {
-        p.song.jump(sec);
-      } catch (e) {
-        console.warn('[RectanglesNo2] seek failed', e);
-        return;
-      }
-      p._playbackSongSecondsAtWallStart = sec;
-      p._playbackWallStartPerf = performance.now();
-      p._reindexMidiCues?.(sec);
-    } else {
+    if (!p.song.isPlaying()) {
       p._playbackFrozenSec = sec;
+      return;
     }
+    guardRestart();
+    restartGuardUntil = performance.now() + 750;
+    try {
+      p.song.soundfile.seek(sec);
+    } catch (e) {
+      console.warn('[RectanglesNo2] seek failed', e);
+      return;
+    }
+    resetClock(sec);
+  };
+
+  // Make the next play() start the audio at `sec` instead of 0.
+  const startNextPlayAt = (sec) => {
+    const sf = p.song?.soundfile;
+    if (!sf?.start) return;
+    const start = sf.start;
+    sf.start = function (time, offset, duration) {
+      sf.start = start;
+      return start.call(this, time, offset ?? sec, duration);
+    };
   };
 
   const timeNow = () => {
@@ -255,15 +291,17 @@ const sketch = (p) => {
     partRange = applyPart(p, NO2_PARTS, reel.part, { bpm: TRACK_BPM });
     if (partRange) p._playbackFrozenSec = partRange.start;
 
-    // Seek on the first play of a part (the play overlay calls togglePlayback directly).
+    // The first play of a part starts the audio (and the clock, via the
+    // frozen time) on it. The play overlay calls togglePlayback directly.
     const baseToggle = p.togglePlayback;
     p.togglePlayback = function () {
-      const wasPlaying = !!this.song?.isPlaying();
-      baseToggle.call(this);
-      if (partRange && !partStarted && !wasPlaying && this.song?.isPlaying()) {
+      const first = partRange && !partStarted && !this.captureEnabled && this.audioLoaded && !this.song?.isPlaying();
+      if (first) {
         partStarted = true;
-        seekTo(partRange.start);
+        this._playbackFrozenSec = partRange.start;
+        startNextPlayAt(partRange.start);
       }
+      baseToggle.call(this);
     };
   };
 
