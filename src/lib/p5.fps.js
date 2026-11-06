@@ -123,7 +123,7 @@ p5.prototype.enableFpsIndicator = function (opts = {}) {
     const dt = this.deltaTime;
     if (typeof dt === 'number' && dt > 0 && dt < 1000) {
       const instant = 1000 / dt;
-      if (this._fpsSmoothed == null) this._fpsSmoothed = instant;
+      if (this._fpsSmoothed === null || this._fpsSmoothed === undefined) this._fpsSmoothed = instant;
       else this._fpsSmoothed = this._fpsSmoothed * 0.8 + instant * 0.2;
       fps = this._fpsSmoothed;
     } else if (this._fpsWindow && this._fpsWindow.length >= 2) {
@@ -143,7 +143,7 @@ p5.prototype.enableFpsIndicator = function (opts = {}) {
  * Stop updating (leaves element hidden state as-is; caller may hide).
  */
 p5.prototype.disableFpsIndicator = function () {
-  if (this._fpsIntervalId != null) {
+  if (this._fpsIntervalId !== null && this._fpsIntervalId !== undefined) {
     clearInterval(this._fpsIntervalId);
     this._fpsIntervalId = null;
   }
@@ -161,7 +161,7 @@ p5.prototype.updateFpsIndicator = function () {
  * Convenience toggle.
  */
 p5.prototype.toggleFpsIndicator = function (opts) {
-  if (this._fpsIntervalId != null) {
+  if (this._fpsIntervalId !== null && this._fpsIntervalId !== undefined) {
     this.disableFpsIndicator();
     if (this._fpsIndicatorEl) this._fpsIndicatorEl.hidden = true;
   } else {
