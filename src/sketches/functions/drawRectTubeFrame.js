@@ -5,7 +5,7 @@ const applyEmissiveGlow = (p, c) => {
   p.specularMaterial(255, 245, 255);
   p.emissiveMaterial(p.red(c) * 0.92, p.green(c) * 0.92, p.blue(c) * 0.92);
   p.fill(c);
-}
+};
 
 export const drawRectTubeFrame = (p, w, h, tubeR, c) => {
   const hw = w / 2 - tubeR;
@@ -49,4 +49,4 @@ export const drawRectTubeFrame = (p, w, h, tubeR, c) => {
     p.sphere(tubeR, 12, 8);
     p.pop();
   }
-}
+};
