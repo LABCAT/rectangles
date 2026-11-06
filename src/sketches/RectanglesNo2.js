@@ -691,7 +691,7 @@ const sketch = (p) => {
     if (!ev) return;
 
     // Live: play on into the next part (parts sit back to back, so the audio
-    // just carries on); after the last, back to the first.
+    // just carries on); after the last, on to RectanglesNo3.
     if (partRange && !p.captureInProgress && p.song?.isPlaying() && t >= partRange.end) {
       const i = PART_IDS.indexOf(partId);
       if (i < PART_IDS.length - 1) flowInto(PART_IDS[i + 1]);
