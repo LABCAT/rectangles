@@ -10,6 +10,7 @@ import {
   createComposition,
   describeNo3Look,
   boardFor,
+  NO3_MIN_PER_NOTE,
 } from '../lib/no3Look.js';
 import initCapture from '@labcat2020/p5.audioreactive-capture';
 import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
@@ -30,11 +31,15 @@ import { drawBoogieWindow } from './functions/boogieWoogieWindow.js';
 //   track 3 "Sampler 1" (heavy guitar)   cues 1–10: a new composition each
 //                                        cue (16×16); cues > 20: step to the
 //                                        seed's next palette
-//   track 5 "Sampler 3" (clavinet)       cues 34–159: four builds, 33 cues
-//                                        each, piece by piece on the seed's
+//   track 5 "Sampler 3" (clavinet)       the part B build (bars 5–7): each
+//                                        note pops in
+//                                        the next piece (with sparks), on the seed's
 //                                        grid and order for that build
-//   track 0 "Synth 1" (filter wheeler)   cues > 6: a new composition each cue
-//                                        (16×16)
+//   track 4 "Synth 2" (bass)             the part C and D builds (bars 9–11,
+//                                        13–15), same way
+//   track 8 "Redrum 1" (drums)           the part E build (bars 17–19)
+//   track 0 "Synth 1" (filter wheeler)   from its pickup into bar 20: a new
+//                                        composition each cue (16 grid)
 // State lives on `p` and is drawn every frame (capture-safe); cues only
 // change what is shown. N / P step the seed, R picks a random one.
 //
@@ -55,15 +60,47 @@ const midiUrl = base + 'audio/RectanglesNo3.mid';
  * boardFor: about 21×12 on desktop, 11×23 on a phone, 12×21 in a 9:16 reel).
  */
 const GRID = 16;
-const BUILD_CUES = 33;
 const BAR_SEC = (60 / NO3_BPM) * 4;
 /** 1-based bar a song time falls in (MIDI times land a hair early, hence the nudge). */
 const barOf = (t) => Math.floor(t / BAR_SEC + 1e-3) + 1;
 // Every 4th bar the guitar strums each beat. Each strum is a full bouncy
-// reveal (bars 4–16; from bar 20 the wheeler owns the single hits), and the
-// clavinet build pauses for it: builds complete over their first 3 bars.
+// reveal (bars 4–16; from bar 20 the wheeler owns the single hits).
 const isStrumBar = (t) => Number.isFinite(t) && barOf(t) % 4 === 0;
+// The wheeler owns the screen from its pickup into bar 20 (bar 19.875) to the
+// end: a new composition every note. Gated on time, not its note count (its
+// 7th note is a lone hit at bar 17, which used to freeze part E).
+const WHEELER_FROM_BAR = 19.875;
+// Wheeler notes come every 0.13–0.27s, too quick to swap whole compositions
+// and still bounce. So each note's composition rolls in ON TOP of the ones
+// still landing: a full WHEEL_REVEAL domino of full springs, whatever the gap.
+// A layer fades out over LAYER_FADE once the next one has fully landed on it;
+// at most MAX_LAYERS under the newest.
+const WHEEL_REVEAL = 0.6;
+const LAYER_FADE = 0.1;
+const MAX_LAYERS = 3;
+const wheelerOnAt = (t) => Number.isFinite(t) && t / BAR_SEC + 1 >= WHEELER_FROM_BAR - 1e-3;
+
+// Builds (parts B–E): each phrase's first 3 bars build one composition piece
+// by piece, then its strum bar takes over. Each build follows one instrument:
+// one note, one piece — it pops in on the note and throws off sparks.
+const BUILD_FIRST_BAR = 5;
 const BUILD_BARS = 3;
+const CLAVINET_TRACK = 5; // Sampler 3
+const BASS_TRACK = 4; // Synth 2: the bass riff (C), then its bouncier line (D)
+// The evolution: guitar (A) → clavinet (B) → bass (C) → bouncier bass (D)
+// → drums (E) → the wheeler (F, G).
+const BUILD_DRIVERS = ['clavinet', 'bass', 'bass', 'drums']; // B, C, D, E
+// Instruments that keep playing through their phrase's strum bar: each note
+// re-strikes a rectangle of the strum composition on screen (it snaps down,
+// springs back, flashes, sparks). Phrase index → instrument (0 = B, bar 8).
+const STRUM_BAR_PLAYERS = { 0: 'clavinet' };
+/** Build 0–3 a song time belongs to (in its 3 build bars), or -1. */
+const buildIndexAt = (t) => {
+  const rel = barOf(t) - BUILD_FIRST_BAR;
+  if (rel < 0 || rel % 4 >= BUILD_BARS) return -1;
+  const i = Math.floor(rel / 4);
+  return i < BUILD_DRIVERS.length ? i : -1;
+};
 // Rectangle fill alpha (0–255): slightly see-through over the cleared canvas.
 const RECT_ALPHA = 165;
 // Single-hit reveals are a domino run in a random order: each hit shuffles
@@ -79,9 +116,24 @@ const REVEAL_DOMINO = 0.7; // share of the window the domino run spreads over
 // Every rectangle's spring is this long, whatever the gap (so riffs, wheeler
 // notes and clavinet pieces all bounce the same).
 const REVEAL_POP = 0.25;
-// Clavinet builds use the same spring: each cue's new batch dominoes in (random
-// order) over REVEAL_DOMINO of the gap to the next cue; earlier pieces stay.
 const RECT_SCALE = 0.95;
+// Build pieces (parts B–E): one piece per note of the build's instrument. It
+// pops in on its note (NOTE_POP spring), flashing toward white over
+// NOTE_FLASH_SEC, and throws off a burst of sparks — small rectangles in its
+// colour that fly out from its edges, spin, shrink and fade over SPARK_SEC.
+const NOTE_POP = 0.18;
+const NOTE_FLASH_SEC = 0.15;
+const NOTE_FLASH = 0.8;
+// Sparks on/off.
+const SPARKS_ON = true;
+const SPARK_SEC = 0.7;
+const SPARK_MIN = 8;
+const SPARK_MAX = 14;
+const SPARK_REACH = 3.2; // cells
+const SPARK_SIZE = 0.4; // cell
+// Live, the visuals wait for the audio output's latency so a hit lands with
+// the sound, not before it (capped; captures run on exact song time).
+const MAX_AV_LAG = 0.25;
 
 // Background: the series' stacked CSS wash (see no3BackgroundGradientCss.js),
 // a new one per composition, with No1's black veil (rect rings, darker to the
@@ -107,6 +159,8 @@ const hash01 = (a, b, c) => {
 
 const sketch = (p) => {
   const reel = readReelParams();
+  // ?debug: the instance on window.__no3, for poking at state from the console.
+  if (new URLSearchParams(window.location.search).has('debug')) window.__no3 = p;
   p.loopAudio = true;
 
   let look = createNo3Look(reel.seed);
@@ -125,7 +179,6 @@ const sketch = (p) => {
   p.rectanglesToDraw = [];
   p.buildTiming = [];
   p.currentCue1 = 1;
-  p.currentCue2 = 1;
   p.currentCue3 = 1;
 
   // Background wash for what's shown: keyed on the composition and palette,
@@ -163,9 +216,26 @@ const sketch = (p) => {
   /** Per shown rectangle: its spring { start, pop, wobble }, or none (just there). */
   p.rectTiming = [];
 
+  /** Compositions still showing under the newest (wheeler only): what show() keeps per layer. */
+  p.under = [];
+  const layerState = () => ({
+    shown: p.shown,
+    shownColours: p.shownColours,
+    shownBoard: p.shownBoard,
+    rectTiming: p.rectTiming,
+    strikes: p.strikes,
+    shownAt: p.shownAt,
+  });
+
   // `timings`: a hit time for a full domino reveal, an array of per-rectangle
   // timings (builds), or null (all at once). `key` names the composition.
-  const show = (rectangles, timings = null, revealWindow = REVEAL_MAX, board = boardOf(GRID), key = '') => {
+  // `stack`: keep what was showing underneath (the wheeler's rolling layers).
+  const show = (rectangles, timings = null, revealWindow = REVEAL_MAX, board = boardOf(GRID), key = '', stack = false) => {
+    if (stack && p.shown?.length) {
+      p.under.push(layerState());
+      if (p.under.length > MAX_LAYERS) p.under.shift();
+    } else if (!stack) p.under = [];
+    p.shownAt = typeof timings === 'number' ? timings : -Infinity;
     p.shown = rectangles;
     p.shownColours = p.colours;
     p.shownBoard = board;
@@ -173,14 +243,67 @@ const sketch = (p) => {
     if (Array.isArray(timings)) p.rectTiming = timings;
     else if (timings !== null) p.rectTiming = dominoTimings(rectangles, timings, revealWindow);
     else p.rectTiming = [];
+    // Strikes (index → note time) belong to the composition they were played on.
+    p.strikes = new Map();
     applyBackground();
+  };
+
+  /** A strum-bar note: re-strike one rectangle of the composition on screen (one already in). */
+  const strikePiece = (t) => {
+    const ready = [];
+    for (let i = 0; i < p.shown.length; i++) {
+      const tm = p.rectTiming[i];
+      if (!tm || tm.start + 0.02 <= t) ready.push(i);
+    }
+    if (!ready.length) return;
+    p.strikes.set(ready[Math.floor(hash01(t, ready.length, 5) * ready.length)], t);
   };
 
   /** A composition from (seed, key): the same key always gives the same one. */
   /** The board for `grid` cells across the short side of the current canvas. */
   const boardOf = (grid) => boardFor(grid, p.width || window.innerWidth, p.height || window.innerHeight);
-  const compose = (key, board = boardOf(GRID), order = 'random') =>
-    createComposition(look.seed, key, board.cols, board.rows, order);
+  const compose = (key, board = boardOf(GRID), order = 'random', span = 4) =>
+    createComposition(look.seed, key, board.cols, board.rows, order, span);
+
+  /**
+   * One piece's sparks, `u` 0–1 of SPARK_SEC since its note: small
+   * rectangles leave from around its edge, fly out decelerating, spin, shrink
+   * and fade. From (start, piece) alone, so seeks and captures match.
+   */
+  const drawSparks = ({ cx, cy, w, h, cell, u, start, colour, salt, scale = 1 }) => {
+    const n = Math.max(3, Math.round((SPARK_MIN + Math.floor(hash01(salt, start, 9) * (SPARK_MAX - SPARK_MIN + 1))) * scale));
+    const e = 1 - (1 - u) ** 3;
+    const fade = (1 - u) ** 1.5;
+    const whiten = Math.max(0, 1 - u * 4);
+    p.push();
+    p.strokeWeight(1.5);
+    p.stroke(0, 255 * fade);
+    p.fill(
+      colour.r + (255 - colour.r) * whiten,
+      colour.g + (255 - colour.g) * whiten,
+      colour.b + (255 - colour.b) * whiten,
+      255 * fade,
+    );
+    for (let i = 0; i < n; i++) {
+      const r1 = hash01(salt + i, start, 1);
+      const r2 = hash01(salt, i + start, 2);
+      const r3 = hash01(i, salt + start, 3);
+      const ang = (i / n + r1 * 0.5) * Math.PI * 2;
+      const ca = Math.cos(ang);
+      const sa = Math.sin(ang);
+      // Leave from the piece's edge, out along the angle.
+      const ex = cx + ca * (w / 2);
+      const ey = cy + sa * (h / 2);
+      const dist = cell * SPARK_REACH * (0.5 + 0.8 * r2);
+      const size = cell * SPARK_SIZE * (0.6 + 0.8 * r3) * (1 - 0.6 * u);
+      p.push();
+      p.translate(ex + ca * dist * e, ey + sa * dist * e);
+      p.rotate((r3 - 0.5) * Math.PI * 4 * e);
+      p.rect(0, 0, size, size * (0.6 + 0.8 * r1));
+      p.pop();
+    }
+    p.pop();
+  };
 
   p.drawRect = (rectangle, cellWidth, cellHeight, t = Infinity, index = 0) => {
     const { x, y, widthMultiplier, heightMultiplier, colourIndex } = rectangle;
@@ -192,11 +315,59 @@ const sketch = (p) => {
     const cy = cellHeight * (y - 1 + heightMultiplier / 2);
     let scale = RECT_SCALE;
     const timing = p.rectTiming[index];
-    if (timing) {
+    if (timing?.burst) {
+      // One note's piece: pops in on its note, flashes, throws off sparks.
+      const since = t - timing.start;
+      if (since <= 0) return;
+      const k = since / NOTE_POP;
+      if (k < 1) scale *= spring(k, timing.wobble);
+      const f = NOTE_FLASH * Math.max(0, 1 - since / NOTE_FLASH_SEC);
+      if (f > 0) {
+        p.fill(colour.r + (255 - colour.r) * f, colour.g + (255 - colour.g) * f, colour.b + (255 - colour.b) * f, RECT_ALPHA);
+      }
+      if (SPARKS_ON && since < SPARK_SEC) {
+        p.sparkJobs.push({
+          cx,
+          cy,
+          w: cellWidth * widthMultiplier,
+          h: cellHeight * heightMultiplier,
+          cell: Math.min(cellWidth, cellHeight),
+          u: since / SPARK_SEC,
+          start: timing.start,
+          colour,
+          salt: x * 31 + y * 17,
+          scale: timing.sparkScale ?? 1,
+        });
+      }
+    } else if (timing) {
       // Waits for its turn in the domino run, then springs in (own wobble).
       const k = (t - timing.start) / timing.pop;
       if (k <= 0) return;
       if (k < 1) scale *= spring(k, timing.wobble);
+    }
+    // Struck by a strum-bar note: snaps down, springs back, flashes, sparks.
+    const struck = p.strikes?.get(index);
+    if (struck !== undefined && t >= struck) {
+      const since = t - struck;
+      const k = since / NOTE_POP;
+      if (k < 1) scale *= 0.5 + 0.5 * spring(k, 2.6);
+      const f = NOTE_FLASH * Math.max(0, 1 - since / NOTE_FLASH_SEC);
+      if (f > 0) {
+        p.fill(colour.r + (255 - colour.r) * f, colour.g + (255 - colour.g) * f, colour.b + (255 - colour.b) * f, RECT_ALPHA);
+      }
+      if (SPARKS_ON && since < SPARK_SEC) {
+        p.sparkJobs.push({
+          cx,
+          cy,
+          w: cellWidth * widthMultiplier,
+          h: cellHeight * heightMultiplier,
+          cell: Math.min(cellWidth, cellHeight),
+          u: since / SPARK_SEC,
+          start: struck,
+          colour,
+          salt: x * 31 + y * 17,
+        });
+      }
     }
     const w = cellWidth * widthMultiplier * scale;
     const h = cellHeight * heightMultiplier * scale;
@@ -213,6 +384,9 @@ const sketch = (p) => {
 
   // Drum-hit times (sorted, one per tick), for the Boogie Woogie traffic.
   let drumTimes = [];
+  /** Per build (0–3): its driver's note times in its build bars. */
+  let buildNotes = [[], [], [], []];
+  const uniqueTimes = (track) => [...new Set((track?.notes ?? []).map((n) => n.time))].sort((a, b) => a - b);
 
   /** Hops the traffic has made by song time `t`: one per drum hit, eased, plus drift. */
   const boogieTravelAt = (t) => {
@@ -281,6 +455,16 @@ const sketch = (p) => {
       p.scheduleCueSet(midiData.tracks[3]?.notes ?? [], 'executeCueSet1'); // Sampler 1 - Heavy guitar
       p.scheduleCueSet(midiData.tracks[5]?.notes ?? [], 'executeCueSet2'); // Sampler 3 - Clavinet D6
       p.scheduleCueSet(midiData.tracks[0]?.notes ?? [], 'executeCueSet3'); // Synth 1 - Filter Wheeler
+      p.scheduleCueSet(midiData.tracks[BASS_TRACK]?.notes ?? [], 'executeBassCue'); // Synth 2 - bass
+      p.scheduleCueSet(midiData.tracks[DRUM_TRACK]?.notes ?? [], 'executeDrumCue'); // Redrum 1 - drums
+      // Each build's own notes (its driver's, in its 3 build bars), so every
+      // one of them can bring in its share of the pieces.
+      const driverTimes = {
+        clavinet: uniqueTimes(midiData.tracks[CLAVINET_TRACK]),
+        bass: uniqueTimes(midiData.tracks[BASS_TRACK]),
+        drums: uniqueTimes(midiData.tracks[DRUM_TRACK]),
+      };
+      buildNotes = BUILD_DRIVERS.map((driver, i) => driverTimes[driver].filter((t) => buildIndexAt(t) === i));
       // Reveal tracks (single hits + the clavinet builds): each note learns the
       // gap to the next hit, so its reveal fits before the next one lands.
       drumTimes = [...new Set((midiData.tracks[DRUM_TRACK]?.notes ?? []).map((n) => n.time))].sort((a, b) => a - b);
@@ -467,6 +651,33 @@ const sketch = (p) => {
     else setPart(nextId);
   };
 
+  // Seconds the heard audio lags the song clock (live only): Tone's
+  // scheduling look-ahead plus the output device's latency. Read from the
+  // context the song already plays on, and cached. Never call
+  // p.getAudioContext() here: in p5.sound 0.2 it CREATES a new AudioContext
+  // (and makes Tone use it) on every call, which piled up contexts and
+  // workers until the sketch crawled.
+  let avLagCache = 0;
+  let avLagAt = -Infinity;
+  const avLag = () => {
+    if (p.captureInProgress || !p.song?.isPlaying()) return 0;
+    const now = performance.now();
+    if (now - avLagAt > 1000) {
+      avLagAt = now;
+      const tone = p.song?.soundfile?.context;
+      const raw = tone?.rawContext ?? tone?._context;
+      const lag = (tone?.lookAhead || 0) + (raw?.outputLatency || 0) + (raw?.baseLatency || 0);
+      avLagCache = Math.min(MAX_AV_LAG, Math.max(0, Number.isFinite(lag) ? lag : 0));
+    }
+    return avLagCache;
+  };
+  // The song clock as heard: cue firing (the lib polls this), drawing and
+  // part changes all run on it, so they shift together and nothing blinks.
+  p.getSongPlaybackTime = function () {
+    const t = p5.prototype.getSongPlaybackTime.call(this);
+    return Number.isFinite(t) ? Math.max(0, t - avLag()) : t;
+  };
+
   // Capture fires every cue from 0 into the state it finds, so start it clean
   // (the live page may have replayed cues up to a ?part= already). No cue
   // lands at 0, so the first captured frame's draw runs before any cue.
@@ -486,17 +697,35 @@ const sketch = (p) => {
     drawBlackVeil(p, VEIL_OPACITY);
     p.stroke(0);
     p.strokeWeight(4);
-    const cellWidth = p.width / p.shownBoard.cols;
-    const cellHeight = p.height / p.shownBoard.rows;
-    for (let i = 0; i < p.shown.length; i++) {
-      p.drawRect(p.shown[i], cellWidth, cellHeight, Number.isFinite(t) ? t : Infinity, i);
+    const tt = Number.isFinite(t) ? t : Infinity;
+    p.sparkJobs = [];
+    // Wheeler layers, oldest first: each fades once the one above has landed.
+    const top = layerState();
+    const stackNow = [...p.under, top];
+    p.under = p.under.filter((layer, j) => {
+      const covered = tt - (stackNow[j + 1].shownAt + WHEEL_REVEAL);
+      return covered < LAYER_FADE;
+    });
+    const ctx = p.drawingContext;
+    for (const layer of [...p.under, top]) {
+      const above = stackNow[stackNow.indexOf(layer) + 1];
+      const fade = above ? 1 - Math.max(0, Math.min(1, (tt - (above.shownAt + WHEEL_REVEAL)) / LAYER_FADE)) : 1;
+      Object.assign(p, layer);
+      const cellWidth = p.width / p.shownBoard.cols;
+      const cellHeight = p.height / p.shownBoard.rows;
+      ctx.globalAlpha = fade;
+      for (let i = 0; i < p.shown.length; i++) p.drawRect(p.shown[i], cellWidth, cellHeight, tt, i);
     }
+    ctx.globalAlpha = 1;
+    Object.assign(p, top);
+    // Sparks on top of every piece.
+    for (const job of p.sparkJobs) drawSparks(job);
   };
 
   p.executeCueSet1 = (note) => {
     // Part A's riffs (cues 1–10), then every strum of a 4th bar until the
     // wheeler takes over — on the current build's grid.
-    const strum = isStrumBar(note?.time) && p.currentCue3 <= 6;
+    const strum = isStrumBar(note?.time) && !wheelerOnAt(note?.time);
     if (p.currentCue1 <= 10 || strum) {
       const key = `g${p.currentCue1}`;
       const board = boardOf(p.currentCue1 <= 10 ? GRID : p.buildGrid);
@@ -512,51 +741,56 @@ const sketch = (p) => {
     p.currentCue1++;
   };
 
-  p.executeCueSet2 = (note) => {
-    if (p.currentCue2 > BUILD_CUES && p.currentCue2 <= BUILD_CUES * 5 - 6) {
-      const modulo = p.currentCue2 % BUILD_CUES;
-      if (modulo === 1) {
-        // Build 0–3 (parts B–E): the seed's grid and build order for it.
-        p.buildIndex = Math.floor((p.currentCue2 - 1) / BUILD_CUES) - 1;
-        const build = look.builds[p.buildIndex] ?? { grid: GRID, order: 'random' };
-        p.buildGrid = build.grid;
-        p.rectangles = compose(`b${p.buildIndex}`, boardOf(build.grid), build.order);
-        p.rectanglesToDraw = [];
-        p.buildTiming = [];
-        p.currentPointer = 0;
-        p.buildStart = note?.time ?? 0;
-      }
-
-      if (p.currentPointer < p.rectangles.length) {
-        // By time: all the pieces down by the end of the build's 3rd bar
-        // (the 4th is the strum bar), whatever the grid's piece count.
-        const dt = (note?.time ?? p.buildStart) - p.buildStart;
-        const share = Math.min(1, (dt + BAR_SEC / 8) / (BUILD_BARS * BAR_SEC));
-        const limit = Math.min(p.rectangles.length, Math.ceil(p.rectangles.length * share));
-        const batch = p.rectangles.slice(p.currentPointer, limit);
-        const at = note?.time;
-        const timings = Number.isFinite(at) ? dominoTimings(batch, at, note.revealWindow ?? REVEAL_MAX) : [];
-        batch.forEach((rect, j) => {
-          p.rectanglesToDraw.push(rect);
-          p.buildTiming.push(timings[j]);
-        });
-        p.currentPointer = limit;
-      }
-
-      // The strum bar (and the wheeler, from bar 20) own the screen; the build
-      // keeps counting underneath.
-      if (!isStrumBar(note?.time) && p.currentCue3 <= 6) {
-        show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, boardOf(p.buildGrid), `b${p.buildIndex}`);
-      }
+  // A note of a build's driver: the build's next piece pops in on the note
+  // and throws off its sparks. The first note of a build starts its
+  // composition (the seed's grid and build order for it).
+  const onBuildNote = (driver, note) => {
+    const t = note?.time;
+    if (!Number.isFinite(t) || wheelerOnAt(t)) return;
+    // Strum bar: this phrase's instrument (if it plays on) strikes the strums' rectangles.
+    if (isStrumBar(t)) {
+      if (STRUM_BAR_PLAYERS[Math.floor((barOf(t) - BUILD_FIRST_BAR) / 4)] === driver) strikePiece(t);
+      return;
     }
-    p.currentCue2++;
+    const i = buildIndexAt(t);
+    if (i < 0 || BUILD_DRIVERS[i] !== driver) return;
+    const times = buildNotes[i];
+    const k = times.findIndex((bt) => Math.abs(bt - t) < 1e-4);
+    if (k < 0) return;
+    if (p.buildIndex !== i) {
+      p.buildIndex = i;
+      const build = look.builds[i] ?? { grid: GRID, order: 'random' };
+      p.buildGrid = build.grid;
+      p.rectangles = compose(`b${i}`, boardOf(build.grid), build.order, build.span ?? 4);
+      // Each note's share of the pieces (at least NO3_MIN_PER_NOTE), so the
+      // build finishes on its last note.
+      p.buildPerNote = Math.max(NO3_MIN_PER_NOTE, Math.ceil(p.rectangles.length / Math.max(1, times.length)));
+      p.rectanglesToDraw = [];
+      p.buildTiming = [];
+      p.currentPointer = 0;
+    }
+    // Each note brings the build's next pieces (its share), in the build's order.
+    for (let n = 0; n < (p.buildPerNote ?? 1) && p.currentPointer < p.rectangles.length; n++) {
+      const rect = p.rectangles[p.currentPointer];
+      p.rectanglesToDraw.push(rect);
+      // Sparks per piece shrink as pieces per note grow (about two pieces' worth a note).
+      const sparkScale = Math.min(1, 2 / (p.buildPerNote ?? 1));
+      p.buildTiming.push({ start: t, burst: true, sparkScale, wobble: 2.2 + 1.6 * hash01(rect.x, rect.y, t) });
+      p.currentPointer++;
+    }
+    show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, boardOf(p.buildGrid), `b${i}`);
   };
 
+  p.executeCueSet2 = (note) => onBuildNote('clavinet', note);
+  p.executeBassCue = (note) => onBuildNote('bass', note);
+  p.executeDrumCue = (note) => onBuildNote('drums', note);
+
   p.executeCueSet3 = (note) => {
-    if (p.currentCue3 > 6) {
+    if (wheelerOnAt(note?.time)) {
       const key = `w${p.currentCue3}`;
       p.rectangles = compose(key);
-      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, boardOf(GRID), key);
+      // Rolls in over the layers still landing, with the full reveal.
+      show(p.rectangles, note?.time ?? null, WHEEL_REVEAL, boardOf(GRID), key, true);
     }
     p.currentCue3++;
   };
@@ -567,13 +801,11 @@ const sketch = (p) => {
     p.colours = NO3_PALETTES[look.palette];
     show(compose('g1'), null, REVEAL_MAX, boardOf(GRID), 'g1');
     p.currentPointer = 0;
-    p.buildStart = 0;
     p.buildIndex = -1;
     p.buildGrid = GRID;
     p.rectanglesToDraw = [];
     p.buildTiming = [];
     p.currentCue1 = 1;
-    p.currentCue2 = 1;
     p.currentCue3 = 1;
   };
 

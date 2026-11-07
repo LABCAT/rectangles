@@ -31,10 +31,10 @@ export const NO3_BPM = 112;
  */
 export const NO3_PARTS = {
   a: { bars: [1, 4], name: 'Riffs' }, // guitar + clavinet: a new composition on every riff
-  b: { bars: [5, 8], name: 'Drums' }, // drums in, the clavinet builds a composition piece by piece
-  c: { bars: [9, 12], name: 'Build' }, // second build, the guitar starts re-rolling the colours
-  d: { bars: [13, 16], name: 'Climb' }, // third build, Synth 2 busier
-  e: { bars: [17, 20], name: 'Storm' }, // last build, the wheeler's pickup
+  b: { bars: [5, 8], name: 'Clavinet' }, // drums in; the clavinet builds a composition, a piece a note
+  c: { bars: [9, 12], name: 'Bass' }, // the bass riff builds; the guitar starts stepping the palettes
+  d: { bars: [13, 16], name: 'Bounce' }, // the bouncier bass line builds
+  e: { bars: [17, 20], name: 'Drums' }, // the drums build; the wheeler's pickup at the end
   f: { bars: [21, 24], name: 'Wheeler' }, // filter wheeler: a new composition every note, drums under it
   g: { bars: [25, 28], name: 'Finale' }, // drums out, the wheeler and clavinet race to the end
 };
@@ -83,6 +83,13 @@ const CENTRE_JITTER = 0.45; // share of the board's half-diagonal
  */
 export const NO3_MAGIC_CHANCE = 0.6;
 const MAGIC_TWO_ABOVE = 60;
+/** Builds: the fewest pieces a note brings in. */
+export const NO3_MIN_PER_NOTE = 2;
+// On small-piece boards (span ≤ 2) magic windows are placed first, big (3–5
+// cells a side), so they stand out among the small pieces; two above
+// MAGIC_BIG_TWO_ABOVE cells.
+const MAGIC_BIG = [3, 5];
+const MAGIC_BIG_TWO_ABOVE = 150;
 
 /**
  * Seed → look. Same seed, same look. Options are accepted for the seed-table
@@ -96,15 +103,23 @@ export const createNo3Look = (seed, { bpm = NO3_BPM } = {}) => {
   const palette = rng.pick(['mondrian', ...PALETTE_NAMES]);
   const rerolls = rng.shuffle(PALETTE_NAMES.filter((n) => n !== palette));
   // Density climbs through the builds: a start and a step per seed.
-  const start = rng.pick([6, 8]);
-  const step = rng.pick([3, 4]);
-  const builds = [0, 1, 2, 3].map((i) => ({ grid: start + step * i, order: rng.pick(NO3_BUILD_ORDERS) }));
+  // Builds are small pieces (≤ 2×2), so the grids start dense enough for the
+  // clavinet's ~52 notes in B (14–16) and climb to 17–22 by E.
+  const start = rng.pick([14, 16]);
+  const step = rng.pick([1, 2]);
+  const builds = [0, 1, 2, 3].map((i) => ({
+    grid: start + step * i,
+    order: rng.pick(NO3_BUILD_ORDERS),
+    // Small pieces (up to 2×2); the sketch gives each note its share, at
+    // least NO3_MIN_PER_NOTE. Magic windows are the exception: big.
+    span: 2,
+  }));
   return { seed: String(seed), bpm, palette, rerolls, builds };
 };
 
 /** One line for the console / seed table. */
 export const describeNo3Look = (look) =>
-  `${look.palette} · builds ${look.builds.map((b) => `${b.grid} ${b.order}`).join(', ')}`;
+  `${look.palette} · builds ${look.builds.map((b) => `${b.grid} ${b.order} ≤${b.span}×${b.span}`).join(', ')}`;
 
 /**
  * The board for a canvas: square-ish cells, about grid × grid of them (the
@@ -136,24 +151,49 @@ const markMagic = (seed, key, pieces) => {
 };
 
 /**
+ * Small-piece boards: the magic windows go down first, big, where they fit
+ * (their own random stream, like markMagic).
+ */
+const placeBigMagic = (seed, key, cols, rows, filled, pieces) => {
+  const rng = createRng(`${seed}:magic:${key}`);
+  if (!rng.chance(NO3_MAGIC_CHANCE)) return;
+  const count = cols * rows > MAGIC_BIG_TWO_ABOVE ? 2 : 1;
+  for (let m = 0; m < count; m++) {
+    const w = Math.min(cols, rng.int(MAGIC_BIG[0], MAGIC_BIG[1]));
+    const h = Math.min(rows, rng.int(MAGIC_BIG[0], MAGIC_BIG[1]));
+    for (let tries = 0; tries < 24; tries++) {
+      const x = rng.int(1, cols - w + 1);
+      const y = rng.int(1, rows - h + 1);
+      let free = true;
+      for (let i = x; i < x + w && free; i++) for (let j = y; j < y + h && free; j++) free = !filled[(j - 1) * cols + (i - 1)];
+      if (!free) continue;
+      pieces.push({ x, y, widthMultiplier: w, heightMultiplier: h, colourIndex: rng.int(0, 4), magic: true });
+      for (let i = x; i < x + w; i++) for (let j = y; j < y + h; j++) filled[(j - 1) * cols + (i - 1)] = 1;
+      break;
+    }
+  }
+};
+
+/**
  * One composition on a cols × rows board: the 2021 algorithm. Random empty
- * cells become 1–4 × 1–4 cell rectangles (clamped to the board), each a random
+ * cells become 1–span × 1–span cell rectangles (clamped to the board), each a random
  * palette slot, until every cell is covered. Pieces come back in `order`.
- * Same (seed, key, cols, rows, order) → same composition.
+ * Same (seed, key, cols, rows, order, span) → same composition.
  * @returns {{ x: number, y: number, widthMultiplier: number, heightMultiplier: number, colourIndex: number }[]}
  */
-export const createComposition = (seed, key, cols, rows, order = 'random') => {
+export const createComposition = (seed, key, cols, rows, order = 'random', span = 4) => {
   const rng = createRng(`${seed}:comp:${key}`);
   const filled = new Uint8Array(cols * rows);
   const cells = rng.shuffle(Array.from({ length: cols * rows }, (_, i) => i));
   const pieces = [];
+  if (span <= 2) placeBigMagic(seed, key, cols, rows, filled, pieces);
   for (const idx of cells) {
     if (filled[idx]) continue;
     // 1-based like the 2021 code: cell (x, y) spans (x - 1)…x.
     const x = (idx % cols) + 1;
     const y = Math.floor(idx / cols) + 1;
-    let widthMultiplier = x < cols ? rng.int(1, 4) : 1;
-    let heightMultiplier = y < rows ? rng.int(1, 4) : 1;
+    let widthMultiplier = x < cols ? rng.int(1, span) : 1;
+    let heightMultiplier = y < rows ? rng.int(1, span) : 1;
     widthMultiplier = x + widthMultiplier > cols ? cols + 1 - x : widthMultiplier;
     heightMultiplier = y + heightMultiplier > rows ? rows + 1 - y : heightMultiplier;
     pieces.push({ x, y, widthMultiplier, heightMultiplier, colourIndex: rng.int(0, 4) });
@@ -176,6 +216,6 @@ export const createComposition = (seed, key, cols, rows, order = 'random') => {
   } else if (order === 'blocks') {
     pieces.sort((a, b) => b.widthMultiplier * b.heightMultiplier - a.widthMultiplier * a.heightMultiplier);
   }
-  markMagic(seed, key, pieces);
+  if (span > 2) markMagic(seed, key, pieces);
   return pieces;
 };
