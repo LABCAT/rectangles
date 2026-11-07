@@ -16,6 +16,8 @@ export const sketchMetadata = {
     title: '#RectanglesNo3',
     description: 'Piet Mondrian grid (2021)',
     sketch: 'RectanglesNo3.js',
+    // Prev/next in the control panel walk the reel parts (a–g).
+    trackNav: true,
   },
   'number-4': {
     title: '#RectanglesNo4',
