@@ -2,6 +2,8 @@ import js from '@eslint/js';
 import globals from 'globals';
 
 export default [
+  // Build output, and .astro files (no Astro parser installed — `astro check` covers them).
+  { ignores: ['dist/**', '.astro/**', '**/*.astro'] },
   js.configs.recommended,
   {
     languageOptions: {
