@@ -5,13 +5,16 @@
  * imports it from Node to shortlist seeds that differ in structure.
  *
  *   createNo3Look(seed) → { palette, rerolls, builds, … }
- *   createComposition(seed, key, grid, order) → one composition (same args, same one)
+ *   boardFor(grid, width, height) → { cols, rows }: square-ish cells, about
+ *                                   grid × grid of them on any screen shape
+ *   createComposition(seed, key, cols, rows, order) → one composition (same args, same one)
  *
  * What a seed decides (each an either/or that reads in a 5s reel):
  *   palette   part A's palette (Mondrian's own, twice as likely as any other)
  *   rerolls   the palettes the guitar steps through from bar 9 (no repeats
  *             until the bank runs out)
- *   builds    the four clavinet builds (parts B–E): each its own grid,
+ *   builds    the four clavinet builds (parts B–E): each its own grid (about
+ *             grid² cells),
  *             climbing in density as the song builds, and its own build order
  */
 
@@ -101,7 +104,17 @@ export const createNo3Look = (seed, { bpm = NO3_BPM } = {}) => {
 
 /** One line for the console / seed table. */
 export const describeNo3Look = (look) =>
-  `${look.palette} · builds ${look.builds.map((b) => `${b.grid}×${b.grid} ${b.order}`).join(', ')}`;
+  `${look.palette} · builds ${look.builds.map((b) => `${b.grid} ${b.order}`).join(', ')}`;
+
+/**
+ * The board for a canvas: square-ish cells, about grid × grid of them (the
+ * 2021 16×16's density) whatever the shape, so phones and 9:16 reels keep
+ * Mondrian's proportions instead of stretching a square grid.
+ */
+export const boardFor = (grid, width, height) => {
+  const cell = Math.sqrt(width * height) / grid;
+  return { cols: Math.max(1, Math.round(width / cell)), rows: Math.max(1, Math.round(height / cell)) };
+};
 
 /**
  * Mark this composition's magic pieces (`piece.magic = true`). Its own random
@@ -123,38 +136,39 @@ const markMagic = (seed, key, pieces) => {
 };
 
 /**
- * One composition on a grid × grid board: the 2021 algorithm. Random empty
+ * One composition on a cols × rows board: the 2021 algorithm. Random empty
  * cells become 1–4 × 1–4 cell rectangles (clamped to the board), each a random
  * palette slot, until every cell is covered. Pieces come back in `order`.
- * Same (seed, key, grid, order) → same composition.
+ * Same (seed, key, cols, rows, order) → same composition.
  * @returns {{ x: number, y: number, widthMultiplier: number, heightMultiplier: number, colourIndex: number }[]}
  */
-export const createComposition = (seed, key, grid, order = 'random') => {
+export const createComposition = (seed, key, cols, rows, order = 'random') => {
   const rng = createRng(`${seed}:comp:${key}`);
-  const filled = new Uint8Array(grid * grid);
-  const cells = rng.shuffle(Array.from({ length: grid * grid }, (_, i) => i));
+  const filled = new Uint8Array(cols * rows);
+  const cells = rng.shuffle(Array.from({ length: cols * rows }, (_, i) => i));
   const pieces = [];
   for (const idx of cells) {
     if (filled[idx]) continue;
     // 1-based like the 2021 code: cell (x, y) spans (x - 1)…x.
-    const x = (idx % grid) + 1;
-    const y = Math.floor(idx / grid) + 1;
-    let widthMultiplier = x < grid ? rng.int(1, 4) : 1;
-    let heightMultiplier = y < grid ? rng.int(1, 4) : 1;
-    widthMultiplier = x + widthMultiplier > grid ? grid + 1 - x : widthMultiplier;
-    heightMultiplier = y + heightMultiplier > grid ? grid + 1 - y : heightMultiplier;
+    const x = (idx % cols) + 1;
+    const y = Math.floor(idx / cols) + 1;
+    let widthMultiplier = x < cols ? rng.int(1, 4) : 1;
+    let heightMultiplier = y < rows ? rng.int(1, 4) : 1;
+    widthMultiplier = x + widthMultiplier > cols ? cols + 1 - x : widthMultiplier;
+    heightMultiplier = y + heightMultiplier > rows ? rows + 1 - y : heightMultiplier;
     pieces.push({ x, y, widthMultiplier, heightMultiplier, colourIndex: rng.int(0, 4) });
     for (let i = x; i < x + widthMultiplier; i++) {
-      for (let j = y; j < y + heightMultiplier; j++) filled[(j - 1) * grid + (i - 1)] = 1;
+      for (let j = y; j < y + heightMultiplier; j++) filled[(j - 1) * cols + (i - 1)] = 1;
     }
   }
   if (order === 'centre') {
     // Distance of each piece's centre from the board's, plus a random nudge.
-    const mid = grid / 2;
-    const reach = Math.hypot(mid, mid);
+    const midX = cols / 2;
+    const midY = rows / 2;
+    const reach = Math.hypot(midX, midY);
     const rank = new Map(
       pieces.map((pc) => {
-        const d = Math.hypot(pc.x - 1 + pc.widthMultiplier / 2 - mid, pc.y - 1 + pc.heightMultiplier / 2 - mid);
+        const d = Math.hypot(pc.x - 1 + pc.widthMultiplier / 2 - midX, pc.y - 1 + pc.heightMultiplier / 2 - midY);
         return [pc, d + rng.random() * reach * CENTRE_JITTER];
       }),
     );

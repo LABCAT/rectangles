@@ -9,6 +9,7 @@ import {
   createNo3Look,
   createComposition,
   describeNo3Look,
+  boardFor,
 } from '../lib/no3Look.js';
 import initCapture from '@labcat2020/p5.audioreactive-capture';
 import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
@@ -48,7 +49,11 @@ const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo3.mp3';
 const midiUrl = base + 'audio/RectanglesNo3.mid';
 
-/** Grid for the single-hit compositions (guitar riffs, wheeler): the 2021 board. */
+/**
+ * Grid for the single-hit compositions (guitar riffs, wheeler): the 2021
+ * board's 16×16 density, as square cells on any screen shape (lib/no3Look.js
+ * boardFor: about 21×12 on desktop, 11×23 on a phone, 12×21 in a 9:16 reel).
+ */
 const GRID = 16;
 const BUILD_CUES = 33;
 const BAR_SEC = (60 / NO3_BPM) * 4;
@@ -109,10 +114,10 @@ const sketch = (p) => {
 
   p.colours = NO3_PALETTES[look.palette];
 
-  /** What draw() shows: rectangles, their colours, their grid, and a key for the background. */
+  /** What draw() shows: rectangles, their colours, their board ({ cols, rows }), and a key for the background. */
   p.shown = [];
   p.shownColours = p.colours;
-  p.shownGrid = GRID;
+  p.shownBoard = { cols: GRID, rows: GRID };
   p.shownKey = '';
 
   p.rectangles = [];
@@ -160,10 +165,10 @@ const sketch = (p) => {
 
   // `timings`: a hit time for a full domino reveal, an array of per-rectangle
   // timings (builds), or null (all at once). `key` names the composition.
-  const show = (rectangles, timings = null, revealWindow = REVEAL_MAX, grid = GRID, key = '') => {
+  const show = (rectangles, timings = null, revealWindow = REVEAL_MAX, board = boardOf(GRID), key = '') => {
     p.shown = rectangles;
     p.shownColours = p.colours;
-    p.shownGrid = grid;
+    p.shownBoard = board;
     p.shownKey = key;
     if (Array.isArray(timings)) p.rectTiming = timings;
     else if (timings !== null) p.rectTiming = dominoTimings(rectangles, timings, revealWindow);
@@ -172,7 +177,10 @@ const sketch = (p) => {
   };
 
   /** A composition from (seed, key): the same key always gives the same one. */
-  const compose = (key, grid = GRID, order = 'random') => createComposition(look.seed, key, grid, order);
+  /** The board for `grid` cells across the short side of the current canvas. */
+  const boardOf = (grid) => boardFor(grid, p.width || window.innerWidth, p.height || window.innerHeight);
+  const compose = (key, board = boardOf(GRID), order = 'random') =>
+    createComposition(look.seed, key, board.cols, board.rows, order);
 
   p.drawRect = (rectangle, cellWidth, cellHeight, t = Infinity, index = 0) => {
     const { x, y, widthMultiplier, heightMultiplier, colourIndex } = rectangle;
@@ -478,8 +486,8 @@ const sketch = (p) => {
     drawBlackVeil(p, VEIL_OPACITY);
     p.stroke(0);
     p.strokeWeight(4);
-    const cellWidth = p.width / p.shownGrid;
-    const cellHeight = p.height / p.shownGrid;
+    const cellWidth = p.width / p.shownBoard.cols;
+    const cellHeight = p.height / p.shownBoard.rows;
     for (let i = 0; i < p.shown.length; i++) {
       p.drawRect(p.shown[i], cellWidth, cellHeight, Number.isFinite(t) ? t : Infinity, i);
     }
@@ -491,9 +499,9 @@ const sketch = (p) => {
     const strum = isStrumBar(note?.time) && p.currentCue3 <= 6;
     if (p.currentCue1 <= 10 || strum) {
       const key = `g${p.currentCue1}`;
-      const grid = p.currentCue1 <= 10 ? GRID : p.buildGrid;
-      p.rectangles = compose(key, grid);
-      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, grid, key);
+      const board = boardOf(p.currentCue1 <= 10 ? GRID : p.buildGrid);
+      p.rectangles = compose(key, board);
+      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, board, key);
     }
 
     // From bar 9: each riff steps to the seed's next palette (shown with the
@@ -512,7 +520,7 @@ const sketch = (p) => {
         p.buildIndex = Math.floor((p.currentCue2 - 1) / BUILD_CUES) - 1;
         const build = look.builds[p.buildIndex] ?? { grid: GRID, order: 'random' };
         p.buildGrid = build.grid;
-        p.rectangles = compose(`b${p.buildIndex}`, build.grid, build.order);
+        p.rectangles = compose(`b${p.buildIndex}`, boardOf(build.grid), build.order);
         p.rectanglesToDraw = [];
         p.buildTiming = [];
         p.currentPointer = 0;
@@ -538,7 +546,7 @@ const sketch = (p) => {
       // The strum bar (and the wheeler, from bar 20) own the screen; the build
       // keeps counting underneath.
       if (!isStrumBar(note?.time) && p.currentCue3 <= 6) {
-        show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, p.buildGrid, `b${p.buildIndex}`);
+        show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, boardOf(p.buildGrid), `b${p.buildIndex}`);
       }
     }
     p.currentCue2++;
@@ -548,7 +556,7 @@ const sketch = (p) => {
     if (p.currentCue3 > 6) {
       const key = `w${p.currentCue3}`;
       p.rectangles = compose(key);
-      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, GRID, key);
+      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, boardOf(GRID), key);
     }
     p.currentCue3++;
   };
@@ -557,7 +565,7 @@ const sketch = (p) => {
   // the composition cue 1 brings in.
   const resetCueState = () => {
     p.colours = NO3_PALETTES[look.palette];
-    show(compose('g1'), null, REVEAL_MAX, GRID, 'g1');
+    show(compose('g1'), null, REVEAL_MAX, boardOf(GRID), 'g1');
     p.currentPointer = 0;
     p.buildStart = 0;
     p.buildIndex = -1;
@@ -580,8 +588,11 @@ const sketch = (p) => {
     p.togglePlayback();
   };
 
+  // A new screen shape is a new board: rebuild what's showing for it.
   p.windowResized = () => {
     p.resizeCanvas(window.innerWidth, window.innerHeight);
+    const t = p.getSongPlaybackTime();
+    replayCuesBefore(Number.isFinite(t) ? t : 0);
   };
 };
 
