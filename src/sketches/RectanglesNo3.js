@@ -15,6 +15,7 @@ import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-ca
 import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
 import { no3BackgroundCss, NO3_BG_BLEND } from './functions/no3BackgroundGradientCss.js';
 import { drawBlackVeil } from './functions/blackVeilRects.js';
+import { drawBoogieWindow } from './functions/boogieWoogieWindow.js';
 
 // #RectanglesNo3 — Piet Mondrian grid (2021).
 // Port of LABCAT/rectangles-no-3 (CRA + Tone.js) to the series' @labcat2020
@@ -50,6 +51,14 @@ const midiUrl = base + 'audio/RectanglesNo3.mid';
 /** Grid for the single-hit compositions (guitar riffs, wheeler): the 2021 board. */
 const GRID = 16;
 const BUILD_CUES = 33;
+const BAR_SEC = (60 / NO3_BPM) * 4;
+/** 1-based bar a song time falls in (MIDI times land a hair early, hence the nudge). */
+const barOf = (t) => Math.floor(t / BAR_SEC + 1e-3) + 1;
+// Every 4th bar the guitar strums each beat. Each strum is a full bouncy
+// reveal (bars 4–16; from bar 20 the wheeler owns the single hits), and the
+// clavinet build pauses for it: builds complete over their first 3 bars.
+const isStrumBar = (t) => Number.isFinite(t) && barOf(t) % 4 === 0;
+const BUILD_BARS = 3;
 // Rectangle fill alpha (0–255): slightly see-through over the cleared canvas.
 const RECT_ALPHA = 165;
 // Single-hit reveals are a domino run in a random order: each hit shuffles
@@ -73,6 +82,14 @@ const RECT_SCALE = 0.95;
 // a new one per composition, with No1's black veil (rect rings, darker to the
 // edges) drawn in front of it at VEIL_OPACITY.
 const VEIL_OPACITY = 0.55;
+
+// Magic rectangles (lib/no3Look.js picks them, seeded): Boogie Woogie windows.
+// Their traffic hops one square on every drum hit (Redrum, track 8), easing
+// over BOOGIE_HOP_SEC, and drifts at BOOGIE_DRIFT hops a second on top (so it
+// moves before the drums come in at bar 5).
+const BOOGIE_HOP_SEC = 0.1;
+const BOOGIE_DRIFT = 0.8;
+const DRUM_TRACK = 8;
 
 /** Damped spring 0 → 1: overshoots, wobbles back, settles by k = 1. */
 const spring = (k, wobble) => 1 - Math.exp(-5 * k) * Math.cos(k * Math.PI * wobble);
@@ -129,9 +146,11 @@ const sketch = (p) => {
     const order = createRng(`no3-reveal:${at}`).shuffle(rectangles.map((_, i) => i));
     const n = Math.max(1, rectangles.length - 1);
     const pop = REVEAL_POP;
+    // The run fits the gap so every spring finishes before the next hit.
+    const spread = Math.min(win * REVEAL_DOMINO, Math.max(0, win - pop));
     const timings = [];
     order.forEach((idx, rank) => {
-      timings[idx] = { start: at + win * REVEAL_DOMINO * (rank / n), pop, wobble: 2.2 + 1.6 * hash01(idx, rank, at) };
+      timings[idx] = { start: at + spread * (rank / n), pop, wobble: 2.2 + 1.6 * hash01(idx, rank, at) };
     });
     return timings;
   };
@@ -171,7 +190,37 @@ const sketch = (p) => {
       if (k <= 0) return;
       if (k < 1) scale *= spring(k, timing.wobble);
     }
-    p.rect(cx, cy, cellWidth * widthMultiplier * scale, cellHeight * heightMultiplier * scale);
+    const w = cellWidth * widthMultiplier * scale;
+    const h = cellHeight * heightMultiplier * scale;
+    p.rect(cx, cy, w, h);
+    if (rectangle.magic) {
+      drawBoogieWindow(p, { cx, cy, w, h, colours: p.shownColours, salt: x * 31 + y * 17, travel: p.boogieTravel });
+      // The black outline back on top of the window.
+      p.push();
+      p.noFill();
+      p.rect(cx, cy, w, h);
+      p.pop();
+    }
+  };
+
+  // Drum-hit times (sorted, one per tick), for the Boogie Woogie traffic.
+  let drumTimes = [];
+
+  /** Hops the traffic has made by song time `t`: one per drum hit, eased, plus drift. */
+  const boogieTravelAt = (t) => {
+    let lo = 0;
+    let hi = drumTimes.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (drumTimes[mid] <= t) lo = mid + 1;
+      else hi = mid;
+    }
+    let hops = 0;
+    if (lo > 0) {
+      const k = Math.min(1, (t - drumTimes[lo - 1]) / BOOGIE_HOP_SEC);
+      hops = lo - 1 + (1 - (1 - k) * (1 - k));
+    }
+    return hops + t * BOOGIE_DRIFT;
   };
 
   p.setup = async () => {
@@ -226,6 +275,7 @@ const sketch = (p) => {
       p.scheduleCueSet(midiData.tracks[0]?.notes ?? [], 'executeCueSet3'); // Synth 1 - Filter Wheeler
       // Reveal tracks (single hits + the clavinet builds): each note learns the
       // gap to the next hit, so its reveal fits before the next one lands.
+      drumTimes = [...new Set((midiData.tracks[DRUM_TRACK]?.notes ?? []).map((n) => n.time))].sort((a, b) => a - b);
       for (const track of [midiData.tracks[3], midiData.tracks[5], midiData.tracks[0]]) {
         const times = [...new Set((track?.notes ?? []).map((n) => n.time))].sort((a, b) => a - b);
         for (const n of track?.notes ?? []) {
@@ -423,6 +473,7 @@ const sketch = (p) => {
     }
 
     const t = p.getSongPlaybackTime();
+    p.boogieTravel = boogieTravelAt(Number.isFinite(t) ? t : 0);
     p.clear();
     drawBlackVeil(p, VEIL_OPACITY);
     p.stroke(0);
@@ -435,10 +486,14 @@ const sketch = (p) => {
   };
 
   p.executeCueSet1 = (note) => {
-    if (p.currentCue1 <= 10) {
+    // Part A's riffs (cues 1–10), then every strum of a 4th bar until the
+    // wheeler takes over — on the current build's grid.
+    const strum = isStrumBar(note?.time) && p.currentCue3 <= 6;
+    if (p.currentCue1 <= 10 || strum) {
       const key = `g${p.currentCue1}`;
-      p.rectangles = compose(key);
-      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, GRID, key);
+      const grid = p.currentCue1 <= 10 ? GRID : p.buildGrid;
+      p.rectangles = compose(key, grid);
+      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, grid, key);
     }
 
     // From bar 9: each riff steps to the seed's next palette (shown with the
@@ -461,12 +516,14 @@ const sketch = (p) => {
         p.rectanglesToDraw = [];
         p.buildTiming = [];
         p.currentPointer = 0;
+        p.buildStart = note?.time ?? 0;
       }
 
       if (p.currentPointer < p.rectangles.length) {
-        // A share of the pieces per cue, all of them by the build's last cue
-        // (whatever the grid: an 8×8 board has far fewer pieces than 33 cues).
-        const share = modulo === 0 ? 1 : modulo / (BUILD_CUES - 1);
+        // By time: all the pieces down by the end of the build's 3rd bar
+        // (the 4th is the strum bar), whatever the grid's piece count.
+        const dt = (note?.time ?? p.buildStart) - p.buildStart;
+        const share = Math.min(1, (dt + BAR_SEC / 8) / (BUILD_BARS * BAR_SEC));
         const limit = Math.min(p.rectangles.length, Math.ceil(p.rectangles.length * share));
         const batch = p.rectangles.slice(p.currentPointer, limit);
         const at = note?.time;
@@ -478,7 +535,11 @@ const sketch = (p) => {
         p.currentPointer = limit;
       }
 
-      show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, p.buildGrid, `b${p.buildIndex}`);
+      // The strum bar (and the wheeler, from bar 20) own the screen; the build
+      // keeps counting underneath.
+      if (!isStrumBar(note?.time) && p.currentCue3 <= 6) {
+        show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, p.buildGrid, `b${p.buildIndex}`);
+      }
     }
     p.currentCue2++;
   };
@@ -498,6 +559,7 @@ const sketch = (p) => {
     p.colours = NO3_PALETTES[look.palette];
     show(compose('g1'), null, REVEAL_MAX, GRID, 'g1');
     p.currentPointer = 0;
+    p.buildStart = 0;
     p.buildIndex = -1;
     p.buildGrid = GRID;
     p.rectanglesToDraw = [];

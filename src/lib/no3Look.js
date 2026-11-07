@@ -74,6 +74,14 @@ export const NO3_BUILD_ORDERS = ['random', 'centre', 'blocks'];
 const CENTRE_JITTER = 0.45; // share of the board's half-diagonal
 
 /**
+ * Magic rectangles ("Boogie Woogie windows", drawn by the sketch): the share
+ * of compositions that get one, and the piece count above which they get two.
+ * Only pieces at least 2×2 cells qualify, the bigger the likelier.
+ */
+export const NO3_MAGIC_CHANCE = 0.6;
+const MAGIC_TWO_ABOVE = 60;
+
+/**
  * Seed → look. Same seed, same look. Options are accepted for the seed-table
  * contract (`{ bpm }`) and only recorded.
  * @param {string|number} seed
@@ -94,6 +102,25 @@ export const createNo3Look = (seed, { bpm = NO3_BPM } = {}) => {
 /** One line for the console / seed table. */
 export const describeNo3Look = (look) =>
   `${look.palette} · builds ${look.builds.map((b) => `${b.grid}×${b.grid} ${b.order}`).join(', ')}`;
+
+/**
+ * Mark this composition's magic pieces (`piece.magic = true`). Its own random
+ * stream, so adding it changed no composition.
+ */
+const markMagic = (seed, key, pieces) => {
+  const rng = createRng(`${seed}:magic:${key}`);
+  if (!rng.chance(NO3_MAGIC_CHANCE)) return;
+  const area = (pc) => pc.widthMultiplier * pc.heightMultiplier;
+  // Biggest half of the 2×2-and-up pieces.
+  const pool = pieces
+    .filter((pc) => pc.widthMultiplier >= 2 && pc.heightMultiplier >= 2)
+    .sort((a, b) => area(b) - area(a));
+  const candidates = rng.shuffle(pool.slice(0, Math.max(1, Math.ceil(pool.length / 2))));
+  const count = pieces.length > MAGIC_TWO_ABOVE ? 2 : 1;
+  candidates.slice(0, count).forEach((pc) => {
+    pc.magic = true;
+  });
+};
 
 /**
  * One composition on a grid × grid board: the 2021 algorithm. Random empty
@@ -135,5 +162,6 @@ export const createComposition = (seed, key, grid, order = 'random') => {
   } else if (order === 'blocks') {
     pieces.sort((a, b) => b.widthMultiplier * b.heightMultiplier - a.widthMultiplier * a.heightMultiplier);
   }
+  markMagic(seed, key, pieces);
   return pieces;
 };
