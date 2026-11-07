@@ -1,8 +1,15 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
 import '../lib/p5.fps.js';
-import { readReelParams, applyPart, resolvePart, createRng } from '../lib/reelParams.js';
-import { NO3_PARTS, NO3_BPM } from '../lib/no3Look.js';
+import { readReelParams, applyPart, resolvePart, createRng, randomSeed } from '../lib/reelParams.js';
+import {
+  NO3_PARTS,
+  NO3_BPM,
+  NO3_PALETTES,
+  createNo3Look,
+  createComposition,
+  describeNo3Look,
+} from '../lib/no3Look.js';
 import initCapture from '@labcat2020/p5.audioreactive-capture';
 import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
 import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
@@ -10,33 +17,38 @@ import { no3BackgroundCss, NO3_BG_BLEND } from './functions/no3BackgroundGradien
 import { drawBlackVeil } from './functions/blackVeilRects.js';
 
 // #RectanglesNo3 — Piet Mondrian grid (2021).
-// Straight port of LABCAT/rectangles-no-3 (CRA + Tone.js) to the series'
-// @labcat2020 conventions. Same visuals: 60 random compositions of 1–4 cell
-// rectangles on a 16×16 grid, swapped on MIDI cues.
+// Port of LABCAT/rectangles-no-3 (CRA + Tone.js) to the series' @labcat2020
+// conventions: random compositions of 1–4 cell rectangles on a square grid,
+// swapped on MIDI cues. Seeded (?seed=, see lib/no3Look.js): the seed picks
+// part A's palette, the palettes the re-rolls step through, and each
+// clavinet build's grid (density climbing B → E) and build order. Every
+// composition comes from (seed, cue), so seeks, replays and captures match.
 //
 // Track 112 BPM, 4/4, ~60s. MIDI cue sets (non-poly, one cue per tick):
 //   track 3 "Sampler 1" (heavy guitar)   cues 1–10: a new composition each
-//                                        cue; cues > 20: re-roll the three
-//                                        colours (black + white stay)
-//   track 5 "Sampler 3" (clavinet)       cues 34–159: build a composition
-//                                        piece by piece, 33 cues per build
+//                                        cue (16×16); cues > 20: step to the
+//                                        seed's next palette
+//   track 5 "Sampler 3" (clavinet)       cues 34–159: four builds, 33 cues
+//                                        each, piece by piece on the seed's
+//                                        grid and order for that build
 //   track 0 "Synth 1" (filter wheeler)   cues > 6: a new composition each cue
+//                                        (16×16)
 // State lives on `p` and is drawn every frame (capture-safe); cues only
-// change what is shown.
+// change what is shown. N / P step the seed, R picks a random one.
 //
 // Parts: ?part=a–g (NO3_PARTS, the track's seven 4-bar phrases, back to back)
 // starts the page on that part and sets p.captureRange so a capture renders
 // just it. Prev/next in the control panel walk the parts; playing on flows
 // into the next part with the music, and after the last back to part A. A
 // jump rebuilds the cue state by replaying every cue before it. The address
-// bar follows (?part=).
+// bar follows (?part=&seed=).
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo3.mp3';
 const midiUrl = base + 'audio/RectanglesNo3.mid';
 
+/** Grid for the single-hit compositions (guitar riffs, wheeler): the 2021 board. */
 const GRID = 16;
-const COMPOSITION_COUNT = 60;
 const BUILD_CUES = 33;
 // Rectangle fill alpha (0–255): slightly see-through over the cleared canvas.
 const RECT_ALPHA = 165;
@@ -71,38 +83,28 @@ const hash01 = (a, b, c) => {
   return v - Math.floor(v);
 };
 
-const MONDRIAN_COLOURS = [
-  { r: 0, g: 0, b: 0 },
-  { r: 255, g: 255, b: 255 },
-  { r: 221, g: 1, b: 0 },
-  { r: 34, g: 80, b: 149 },
-  { r: 250, g: 201, b: 1 },
-];
-
 const sketch = (p) => {
   const reel = readReelParams();
   p.loopAudio = true;
 
-  p.colours = MONDRIAN_COLOURS;
-  p.multipliers = [1, 2, 3, 4];
-  p.rectangleGrid = [];
-  p.compositions = [];
-  p.currentComposition = 0;
+  let look = createNo3Look(reel.seed);
+  p.reelSeed = look.seed;
 
-  /** What draw() shows: a list of rectangles and the colours they were drawn with. */
+  p.colours = NO3_PALETTES[look.palette];
+
+  /** What draw() shows: rectangles, their colours, their grid, and a key for the background. */
   p.shown = [];
-  p.shownColours = MONDRIAN_COLOURS;
+  p.shownColours = p.colours;
+  p.shownGrid = GRID;
+  p.shownKey = '';
 
   p.rectangles = [];
   p.currentPointer = 0;
-  p.rectanglesPerCue = 0;
   p.rectanglesToDraw = [];
   p.buildTiming = [];
   p.currentCue1 = 1;
   p.currentCue2 = 1;
   p.currentCue3 = 1;
-
-  /** Song time of the current single-hit reveal (null: show it all at once). */
 
   // Background wash for what's shown: keyed on the composition and palette,
   // so a seek or capture lands on the same one.
@@ -110,7 +112,7 @@ const sketch = (p) => {
   let bgCss = '';
   const applyBackground = () => {
     if (!p.bgGradientEl) return;
-    const key = `${p.currentComposition}:${p.shownColours.map((c) => `${c.r},${c.g},${c.b}`).join(';')}`;
+    const key = `${look.seed}:${p.shownKey}:${p.shownColours.map((c) => `${c.r},${c.g},${c.b}`).join(';')}`;
     const css = no3BackgroundCss(p.shownColours, key);
     if (css === bgCss) return;
     bgCss = css;
@@ -138,58 +140,20 @@ const sketch = (p) => {
   p.rectTiming = [];
 
   // `timings`: a hit time for a full domino reveal, an array of per-rectangle
-  // timings (builds), or null (all at once).
-  const show = (rectangles, timings = null, revealWindow = REVEAL_MAX) => {
+  // timings (builds), or null (all at once). `key` names the composition.
+  const show = (rectangles, timings = null, revealWindow = REVEAL_MAX, grid = GRID, key = '') => {
     p.shown = rectangles;
     p.shownColours = p.colours;
+    p.shownGrid = grid;
+    p.shownKey = key;
     if (Array.isArray(timings)) p.rectTiming = timings;
     else if (timings !== null) p.rectTiming = dominoTimings(rectangles, timings, revealWindow);
     else p.rectTiming = [];
     applyBackground();
   };
 
-  const nextComposition = () => {
-    const composition = p.compositions[p.currentComposition] ?? [];
-    p.currentComposition++;
-    return composition;
-  };
-
-  p.createComposition = () => {
-    p.rectangles = [];
-    p.rectangleGrid = p.rectangleGrid.map((obj) => ({ ...obj, empty: true }));
-    let spaceAvailable = p.rectangleGrid.some((obj) => obj.empty);
-    while (spaceAvailable) {
-      const cell = p.random(p.rectangleGrid.filter((obj) => obj.empty));
-      const { x, y } = cell;
-      let widthMultiplier = x < GRID ? p.random(p.multipliers) : 1;
-      let heightMultiplier = y < GRID ? p.random(p.multipliers) : 1;
-      widthMultiplier = x + widthMultiplier > GRID ? GRID + 1 - x : widthMultiplier;
-      heightMultiplier = y + heightMultiplier > GRID ? GRID + 1 - y : heightMultiplier;
-      p.rectangles.push({
-        x,
-        y,
-        widthMultiplier,
-        heightMultiplier,
-        colourIndex: Math.floor(p.random(0, 5)),
-      });
-      for (let i = x; i < x + widthMultiplier; i++) {
-        for (let j = y; j < y + heightMultiplier; j++) {
-          const index = p.rectangleGrid.findIndex((obj) => obj.x === i && obj.y === j);
-          p.rectangleGrid[index].empty = false;
-        }
-      }
-      spaceAvailable = p.rectangleGrid.some((obj) => obj.empty);
-    }
-  };
-
-  p.createCompositions = () => {
-    p.compositions = [];
-    for (let i = 0; i < COMPOSITION_COUNT; i++) {
-      p.createComposition();
-      p.compositions.push(p.rectangles);
-    }
-    p.rectangles = [];
-  };
+  /** A composition from (seed, key): the same key always gives the same one. */
+  const compose = (key, grid = GRID, order = 'random') => createComposition(look.seed, key, grid, order);
 
   p.drawRect = (rectangle, cellWidth, cellHeight, t = Infinity, index = 0) => {
     const { x, y, widthMultiplier, heightMultiplier, colourIndex } = rectangle;
@@ -240,18 +204,16 @@ const sketch = (p) => {
     window.toggleFps = (opts) => p.toggleFpsIndicator(opts);
     window.addEventListener('keydown', (e) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key.toLowerCase() === 'f') p.toggleFpsIndicator();
+      const k = e.key.toLowerCase();
+      if (k === 'f') p.toggleFpsIndicator();
+      else if (k === 'n') stepSeed(1);
+      else if (k === 'p') stepSeed(-1);
+      else if (k === 'r') setSeed(randomSeed());
     });
 
-    p.rectangleGrid = [];
-    for (let i = 1; i <= GRID; i++) {
-      for (let j = 1; j <= GRID; j++) {
-        p.rectangleGrid.push({ x: i, y: j, empty: true });
-      }
-    }
-    p.createCompositions();
-    // Open on the first composition (the one cue 1 shows), not a blank white canvas.
-    show(p.compositions[0]);
+    // Open on the first composition (the one cue 1 shows), not a blank canvas.
+    resetCueState();
+    logLook();
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
@@ -317,7 +279,25 @@ const sketch = (p) => {
   const syncUrl = () => {
     const q = new URLSearchParams(window.location.search);
     q.set('part', partId);
+    q.set('seed', look.seed);
     window.history.replaceState(null, '', `${window.location.pathname}?${q}`);
+  };
+
+  const logLook = () => console.log(`[RectanglesNo3] seed ${look.seed} · ${describeNo3Look(look)}`);
+
+  // A new seed shows at once: the cues so far replayed with it.
+  const setSeed = (next) => {
+    look = createNo3Look(String(next));
+    p.reelSeed = look.seed;
+    const t = p.getSongPlaybackTime();
+    replayCuesBefore(Number.isFinite(t) ? t : 0);
+    syncUrl();
+    logLook();
+  };
+
+  const stepSeed = (d) => {
+    const n = Number(look.seed);
+    setSeed(Number.isInteger(n) ? Math.max(0, n + d) : randomSeed());
   };
 
   const emitTrack = () => {
@@ -447,8 +427,8 @@ const sketch = (p) => {
     drawBlackVeil(p, VEIL_OPACITY);
     p.stroke(0);
     p.strokeWeight(4);
-    const cellWidth = p.width / GRID;
-    const cellHeight = p.height / GRID;
+    const cellWidth = p.width / p.shownGrid;
+    const cellHeight = p.height / p.shownGrid;
     for (let i = 0; i < p.shown.length; i++) {
       p.drawRect(p.shown[i], cellWidth, cellHeight, Number.isFinite(t) ? t : Infinity, i);
     }
@@ -456,18 +436,15 @@ const sketch = (p) => {
 
   p.executeCueSet1 = (note) => {
     if (p.currentCue1 <= 10) {
-      p.rectangles = nextComposition();
-      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX);
+      const key = `g${p.currentCue1}`;
+      p.rectangles = compose(key);
+      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, GRID, key);
     }
 
+    // From bar 9: each riff steps to the seed's next palette (shown with the
+    // next composition / build piece).
     if (p.currentCue1 > 20) {
-      p.colours = [
-        MONDRIAN_COLOURS[0],
-        MONDRIAN_COLOURS[1],
-        { r: p.random(255), g: p.random(255), b: p.random(255) },
-        { r: p.random(255), g: p.random(255), b: p.random(255) },
-        { r: p.random(255), g: p.random(255), b: p.random(255) },
-      ];
+      p.colours = NO3_PALETTES[look.rerolls[(p.currentCue1 - 21) % look.rerolls.length]];
     }
     p.currentCue1++;
   };
@@ -476,15 +453,21 @@ const sketch = (p) => {
     if (p.currentCue2 > BUILD_CUES && p.currentCue2 <= BUILD_CUES * 5 - 6) {
       const modulo = p.currentCue2 % BUILD_CUES;
       if (modulo === 1) {
-        p.rectangles = nextComposition();
+        // Build 0–3 (parts B–E): the seed's grid and build order for it.
+        p.buildIndex = Math.floor((p.currentCue2 - 1) / BUILD_CUES) - 1;
+        const build = look.builds[p.buildIndex] ?? { grid: GRID, order: 'random' };
+        p.buildGrid = build.grid;
+        p.rectangles = compose(`b${p.buildIndex}`, build.grid, build.order);
         p.rectanglesToDraw = [];
         p.buildTiming = [];
         p.currentPointer = 0;
-        p.rectanglesPerCue = Math.floor(p.rectangles.length / BUILD_CUES);
       }
 
       if (p.currentPointer < p.rectangles.length) {
-        const limit = Math.min(p.rectanglesPerCue * modulo, p.rectangles.length);
+        // A share of the pieces per cue, all of them by the build's last cue
+        // (whatever the grid: an 8×8 board has far fewer pieces than 33 cues).
+        const share = modulo === 0 ? 1 : modulo / (BUILD_CUES - 1);
+        const limit = Math.min(p.rectangles.length, Math.ceil(p.rectangles.length * share));
         const batch = p.rectangles.slice(p.currentPointer, limit);
         const at = note?.time;
         const timings = Number.isFinite(at) ? dominoTimings(batch, at, note.revealWindow ?? REVEAL_MAX) : [];
@@ -492,31 +475,31 @@ const sketch = (p) => {
           p.rectanglesToDraw.push(rect);
           p.buildTiming.push(timings[j]);
         });
-        p.currentPointer = p.rectanglesPerCue * modulo;
+        p.currentPointer = limit;
       }
 
-      show([...p.rectanglesToDraw], [...p.buildTiming]);
+      show([...p.rectanglesToDraw], [...p.buildTiming], REVEAL_MAX, p.buildGrid, `b${p.buildIndex}`);
     }
     p.currentCue2++;
   };
 
   p.executeCueSet3 = (note) => {
     if (p.currentCue3 > 6) {
-      p.rectangles = nextComposition();
-      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX);
+      const key = `w${p.currentCue3}`;
+      p.rectangles = compose(key);
+      show(p.rectangles, note?.time ?? null, note?.revealWindow ?? REVEAL_MAX, GRID, key);
     }
     p.currentCue3++;
   };
 
-  // Fresh compositions and cue counters, as at the top of the track.
+  // Cue state as at the top of the track: the seed's part-A palette, showing
+  // the composition cue 1 brings in.
   const resetCueState = () => {
-    p.colours = MONDRIAN_COLOURS;
-    p.createCompositions();
-    p.currentComposition = 0;
-    show(p.compositions[0]);
-    p.shownColours = MONDRIAN_COLOURS;
+    p.colours = NO3_PALETTES[look.palette];
+    show(compose('g1'), null, REVEAL_MAX, GRID, 'g1');
     p.currentPointer = 0;
-    p.rectanglesPerCue = 0;
+    p.buildIndex = -1;
+    p.buildGrid = GRID;
     p.rectanglesToDraw = [];
     p.buildTiming = [];
     p.currentCue1 = 1;

@@ -4,16 +4,15 @@
  * Pure ES module, no p5 and no browser globals: the lab's `pnpm seed:table`
  * imports it from Node to shortlist seeds that differ in structure.
  *
- *   createNo3Look(seed)            → the look: palette + grid + composition rules
- *   gridFor(look, width, height)   → cell layout for a canvas size
- *   createCompositions(look, cols, rows, count)
- *                                  → `count` compositions (all from the seed)
+ *   createNo3Look(seed) → { palette, rerolls, builds, … }
+ *   createComposition(seed, key, grid, order) → one composition (same args, same one)
  *
- * Every choice is an either/or pick that reads in a 5s reel (ledger §13):
- * grid density, block span, how much colour, line weight, a 45° lozenge
- * (Mondrian's diamond canvases), the order pieces are built in and how a new composition enters.
- * The palette stays inside Mondrian's own logic: off-white ground, black (or
- * yellow / white / grey) lines, red, blue and yellow planes.
+ * What a seed decides (each an either/or that reads in a 5s reel):
+ *   palette   part A's palette (Mondrian's own, twice as likely as any other)
+ *   rerolls   the palettes the guitar steps through from bar 9 (no repeats
+ *             until the bank runs out)
+ *   builds    the four clavinet builds (parts B–E): each its own grid,
+ *             climbing in density as the song builds, and its own build order
  */
 
 import { createRng } from './reelParams.js';
@@ -37,24 +36,42 @@ export const NO3_PARTS = {
   g: { bars: [25, 28], name: 'Finale' }, // drums out, the wheeler and clavinet race to the end
 };
 
-/**
- * Mondrian palettes. `black` is the fifth plane colour (Mondrian's black
- * blocks); `primaries` are the three the guitar re-rolls between.
- */
-export const NO3_PALETTES = {
-  // Composition with Red, Blue and Yellow (1930).
-  classic: { ground: '#f5f3ee', line: '#121212', black: '#121212', primaries: ['#dd0100', '#225095', '#fac901'] },
-  // Broadway Boogie Woogie (1943): yellow lines, red / blue / grey blocks, yellow bars.
-  boogie: { ground: '#efede6', line: '#f2c400', black: '#f2c400', primaries: ['#d6281b', '#2a4fa0', '#bdbab2'] },
-  // Inverted: white lines and planes on black.
-  noir: { ground: '#0e0e0e', line: '#f2efe8', black: '#f2efe8', primaries: ['#ff2a1a', '#2f6bff', '#ffd21f'] },
-  // Early 1920s: faded primaries and grey planes.
-  muted: { ground: '#ebe7dc', line: '#2b2b2b', black: '#8f8f8a', primaries: ['#c1432e', '#4a6a9a', '#e2b93b'] },
-};
+const hex = (h) => ({ r: parseInt(h.slice(1, 3), 16), g: parseInt(h.slice(3, 5), 16), b: parseInt(h.slice(5, 7), 16) });
 
-const LINES = { fine: 0.07, bold: 0.11, heavy: 0.16 }; // share of a cell
-const FILLS = { sparse: 0.72, balanced: 0.55, dense: 0.36 }; // share of white planes
-const BLACK_SHARE = 0.16; // of the coloured planes
+/**
+ * The palette bank. Five slots each, as the sketch uses them: 0 dark plane,
+ * 1 light plane, 2–4 the three colours (the background is built from their
+ * complements). Lines are always black.
+ */
+export const NO3_PALETTES = Object.fromEntries(
+  Object.entries({
+    // Composition with Red, Blue and Yellow (1930): the only red / blue / yellow one.
+    // The rest are each their own hue family, all strong and saturated.
+    mondrian: ['#000000', '#ffffff', '#dd0100', '#225095', '#fac901'],
+    // Sunset: blaze orange, hot pink, amber.
+    sunset: ['#000000', '#ffffff', '#ff5400', '#ff0054', '#ffbd00'],
+    // Ocean: cyan, electric blue, aqua.
+    ocean: ['#000000', '#ffffff', '#00b4d8', '#0047ff', '#00f5d4'],
+    // Vapor: magenta, cyan, violet.
+    vapor: ['#000000', '#ffffff', '#ff2ec4', '#00e5ff', '#8a2be2'],
+    // Citrus: orange, lemon, lime.
+    citrus: ['#000000', '#ffffff', '#ff7b00', '#ffe600', '#70e000'],
+    // Jungle: emerald, teal, chartreuse.
+    jungle: ['#000000', '#ffffff', '#00c853', '#00bfa5', '#aeea00'],
+    // Berry: purple, raspberry, hot pink.
+    berry: ['#000000', '#ffffff', '#9d00ff', '#ff006e', '#ff2d95'],
+  }).map(([name, slots]) => [name, slots.map(hex)]),
+);
+
+const PALETTE_NAMES = Object.keys(NO3_PALETTES);
+
+/**
+ * How a build lays its pieces down: `random` (the 2021 order), `centre`
+ * (grows out from the middle, loosely: jittered so it never reads as a
+ * sweep), `blocks` (biggest pieces first, small ones filling in).
+ */
+export const NO3_BUILD_ORDERS = ['random', 'centre', 'blocks'];
+const CENTRE_JITTER = 0.45; // share of the board's half-diagonal
 
 /**
  * Seed → look. Same seed, same look. Options are accepted for the seed-table
@@ -65,98 +82,58 @@ const BLACK_SHARE = 0.16; // of the coloured planes
 export const createNo3Look = (seed, { bpm = NO3_BPM } = {}) => {
   const rng = createRng(seed);
   // Draw order is part of every seed's look: append new picks, never insert.
-  const palette = rng.pick(['classic', 'classic', 'boogie', 'noir', 'muted']);
-  const cols = rng.pick([6, 9, 12, 16]);
-  const span = rng.pick([2, 3, 4]);
-  const fill = rng.pick(['sparse', 'balanced', 'dense']);
-  const line = rng.pick(['fine', 'bold', 'heavy']);
-  const lozenge = rng.chance(0.25);
-  const build = rng.pick(['scatter', 'sweep', 'blocks']);
-  const enter = rng.pick(['cascade', 'wipe', 'cut']);
-  return {
-    seed: String(seed),
-    bpm,
-    palette,
-    cols,
-    span: Math.min(span, Math.max(2, Math.floor(cols / 3))),
-    fill,
-    line,
-    lozenge,
-    build,
-    enter,
-    colours: NO3_PALETTES[palette],
-    uniforms: { uLine: LINES[line], uWhite: FILLS[fill] },
-  };
+  const palette = rng.pick(['mondrian', ...PALETTE_NAMES]);
+  const rerolls = rng.shuffle(PALETTE_NAMES.filter((n) => n !== palette));
+  // Density climbs through the builds: a start and a step per seed.
+  const start = rng.pick([6, 8]);
+  const step = rng.pick([3, 4]);
+  const builds = [0, 1, 2, 3].map((i) => ({ grid: start + step * i, order: rng.pick(NO3_BUILD_ORDERS) }));
+  return { seed: String(seed), bpm, palette, rerolls, builds };
 };
+
+/** One line for the console / seed table. */
+export const describeNo3Look = (look) =>
+  `${look.palette} · builds ${look.builds.map((b) => `${b.grid}×${b.grid} ${b.order}`).join(', ')}`;
 
 /**
- * Cell layout for a canvas. Upright: `cols` across, square-ish cells, rows
- * from the aspect ratio. Lozenge: a square cols × cols grid,
- * rotated 45° and big enough to cover the whole canvas.
+ * One composition on a grid × grid board: the 2021 algorithm. Random empty
+ * cells become 1–4 × 1–4 cell rectangles (clamped to the board), each a random
+ * palette slot, until every cell is covered. Pieces come back in `order`.
+ * Same (seed, key, grid, order) → same composition.
+ * @returns {{ x: number, y: number, widthMultiplier: number, heightMultiplier: number, colourIndex: number }[]}
  */
-export const gridFor = (look, width, height) => {
-  if (look.lozenge) {
-    const side = (width + height) / Math.SQRT2;
-    const cell = side / look.cols;
-    return { cols: look.cols, rows: look.cols, cellW: cell, cellH: cell, gridW: side, gridH: side, tilt: true };
-  }
-  const cellW = width / look.cols;
-  const rows = Math.max(1, Math.round(height / cellW));
-  return { cols: look.cols, rows, cellW, cellH: height / rows, gridW: width, gridH: height, tilt: false };
-};
-
-// 0 white plane, 1 black plane, 2–4 the three primaries (before re-rolls).
-const pickColour = (rng, area, white) => {
-  const colourChance = (1 - white) * (area <= 1 ? 1.25 : area >= 6 ? 0.5 : 1);
-  if (!rng.chance(colourChance)) return 0;
-  if (rng.chance(BLACK_SHARE)) return 1;
-  return 2 + Math.floor(rng.random() * 3);
-};
-
-/**
- * One composition: random empty cells grow into 1…span-cell rectangles that
- * never overlap, until the grid is full (the 2021 algorithm, minus overlaps).
- * Pieces come back in build order.
- */
-export const createComposition = (rng, look, cols, rows) => {
-  const filled = new Uint8Array(cols * rows);
-  const white = FILLS[look.fill] ?? FILLS.balanced;
+export const createComposition = (seed, key, grid, order = 'random') => {
+  const rng = createRng(`${seed}:comp:${key}`);
+  const filled = new Uint8Array(grid * grid);
+  const cells = rng.shuffle(Array.from({ length: grid * grid }, (_, i) => i));
   const pieces = [];
-  const cells = rng.shuffle(Array.from({ length: cols * rows }, (_, i) => i));
-  const rowEmpty = (y, x, w) => {
-    for (let i = x; i < x + w; i++) if (filled[y * cols + i]) return false;
-    return true;
-  };
   for (const idx of cells) {
     if (filled[idx]) continue;
-    const x = idx % cols;
-    const y = Math.floor(idx / cols);
-    const wantW = Math.min(rng.int(1, look.span), cols - x);
-    const wantH = Math.min(rng.int(1, look.span), rows - y);
-    let w = 1;
-    while (w < wantW && !filled[y * cols + x + w]) w++;
-    let h = 1;
-    while (h < wantH && rowEmpty(y + h, x, w)) h++;
-    for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++) filled[j * cols + i] = 1;
-    pieces.push({ x, y, w, h, c: pickColour(rng, w * h, white) });
+    // 1-based like the 2021 code: cell (x, y) spans (x - 1)…x.
+    const x = (idx % grid) + 1;
+    const y = Math.floor(idx / grid) + 1;
+    let widthMultiplier = x < grid ? rng.int(1, 4) : 1;
+    let heightMultiplier = y < grid ? rng.int(1, 4) : 1;
+    widthMultiplier = x + widthMultiplier > grid ? grid + 1 - x : widthMultiplier;
+    heightMultiplier = y + heightMultiplier > grid ? grid + 1 - y : heightMultiplier;
+    pieces.push({ x, y, widthMultiplier, heightMultiplier, colourIndex: rng.int(0, 4) });
+    for (let i = x; i < x + widthMultiplier; i++) {
+      for (let j = y; j < y + heightMultiplier; j++) filled[(j - 1) * grid + (i - 1)] = 1;
+    }
   }
-  if (look.build === 'sweep') pieces.sort((a, b) => a.x + a.y - (b.x + b.y) || a.x - b.x);
-  else if (look.build === 'blocks') pieces.sort((a, b) => b.w * b.h - a.w * a.h);
+  if (order === 'centre') {
+    // Distance of each piece's centre from the board's, plus a random nudge.
+    const mid = grid / 2;
+    const reach = Math.hypot(mid, mid);
+    const rank = new Map(
+      pieces.map((pc) => {
+        const d = Math.hypot(pc.x - 1 + pc.widthMultiplier / 2 - mid, pc.y - 1 + pc.heightMultiplier / 2 - mid);
+        return [pc, d + rng.random() * reach * CENTRE_JITTER];
+      }),
+    );
+    pieces.sort((a, b) => rank.get(a) - rank.get(b));
+  } else if (order === 'blocks') {
+    pieces.sort((a, b) => b.widthMultiplier * b.heightMultiplier - a.widthMultiplier * a.heightMultiplier);
+  }
   return pieces;
 };
-
-/** `count` compositions for a cols × rows grid, all from the look's seed. */
-export const createCompositions = (look, cols, rows, count = 64) => {
-  const rng = createRng(`${look.seed}:comps:${cols}x${rows}`);
-  return Array.from({ length: count }, () => createComposition(rng, look, cols, rows));
-};
-
-/** The six orders of the three primaries; the guitar re-rolls between them. */
-export const PRIMARY_PERMS = [
-  [0, 1, 2],
-  [0, 2, 1],
-  [1, 0, 2],
-  [1, 2, 0],
-  [2, 0, 1],
-  [2, 1, 0],
-];
