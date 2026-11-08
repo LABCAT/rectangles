@@ -87,6 +87,10 @@ export const createNo2Look = (seed, { bpm = TRACK_BPM, beats = 16, speed = 1 } =
   // Camera: a small roll on some seeds; rotation direction.
   const roll = pick([0, 0, 0.12, -0.12]);
   const spin = pick([1, -1]);
+  // Chroma tunnel background (appended: earlier picks keep their draws).
+  const tunnelRings = pick([14, 18, 24]);
+  const tunnelRate = pick([0.5, 1, 1]); // rings a beat
+  const tunnelSat = range(72, 92);
 
   const kick = hsbToRgb(hue, 67, 100);
   const snare = hsbToRgb(hue2, 72, 100);
@@ -112,6 +116,9 @@ export const createNo2Look = (seed, { bpm = TRACK_BPM, beats = 16, speed = 1 } =
     bg,
     roll,
     spin,
+    tunnelRings,
+    tunnelRate,
+    tunnelSat,
     kick,
     snare,
     // seed-table reads the opening colour from palettes[0].hue

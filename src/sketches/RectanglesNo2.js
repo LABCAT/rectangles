@@ -3,7 +3,7 @@ import '@lib/p5.audioReact.js';
 import '../lib/p5.fps.js';
 import initCapture from '@labcat2020/p5.audioreactive-capture';
 import { drawRectTubeFrame } from './functions/drawRectTubeFrame.js';
-import { paintNo2Background } from './functions/no2BackgroundGradientCss.js';
+import { NO2_TUNNEL_FRAG } from './functions/no2HyperTunnel.js';
 import { readReelParams, applyPart, resolvePart, randomSeed } from '../lib/reelParams.js';
 import { createNo2Look, melodyHue, pitchClassHue, hsbToRgb, TRACK_BPM, NO2_PARTS } from '../lib/no2Look.js';
 
@@ -60,11 +60,6 @@ const activeSince = (events, t, window) => {
   return out.reverse();
 };
 
-const ccStep = (ccs, t) => {
-  const i = lastAt(ccs, t);
-  return i < 0 ? 0 : ccs[i].v;
-};
-
 const ccLerp = (ccs, t) => {
   if (!ccs.length) return 1;
   const i = lastAt(ccs, t);
@@ -109,7 +104,6 @@ const sketch = (p) => {
   let partId = NO2_PARTS[reel.part] ? reel.part : PART_IDS[0];
   let partRange = null;
   let partStarted = false;
-  let bgIdx = -2;
 
   p.loopAudio = true;
   p.captureSeekable = true;
@@ -117,8 +111,8 @@ const sketch = (p) => {
   // Background gradients live in the WebGL canvas (a quarter-res texture), so
   // the canvas is the whole frame: capture needs no DOM compositing and can
   // use the fast data-URL path.
-  let bgG = null; // p5.Graphics: the composed background texture
-  let bgGrad = null; // offscreen canvas: the current gradient, repainted per hit
+  let bgG = null; // p5.Graphics (WEBGL, half res): the tunnel shader's output
+  let bgShader = null;
 
   const syncUrl = () => {
     const q = new URLSearchParams(window.location.search);
@@ -131,10 +125,9 @@ const sketch = (p) => {
   const setSeed = (next) => {
     seed = String(next);
     look = createNo2Look(seed, { bpm: motionBpm, beats: reel.beats, speed: reel.speed });
-    bgIdx = -2;
     syncUrl();
     console.log(
-      `[RectanglesNo2] seed ${seed} · ${look.lanes} lanes · ${look.frame} · hero ${look.hero} · ring ${look.ringFrames} · ${look.bg} · ${look.harmony} ${Math.round(look.hue)}°`,
+      `[RectanglesNo2] seed ${seed} · ${look.lanes} lanes · ${look.frame} · hero ${look.hero} · ring ${look.ringFrames} · tunnel ${look.tunnelRings}×${look.tunnelRate} · ${look.harmony} ${Math.round(look.hue)}°`,
     );
   };
 
@@ -249,38 +242,51 @@ const sketch = (p) => {
 
   const rgb = (c, k = 1) => p.color(c[0] * k, c[1] * k, c[2] * k);
 
-  const BG_SCALE = 4;
+  const BG_SCALE = 2;
 
-  const applyBackground = (idx) => {
+  // The rectangle hyper-tunnel (functions/no2HyperTunnel.js): a fragment
+  // shader run into a half-res WEBGL graphics each frame.
+  // Each background hit moves the sky to the next neon set: the hue turns by
+  // the golden angle, so sets never repeat. A set is three bright colours and
+  // one dark one (depth), like cosmic-couch's.
+  const PALETTE_TURN = 137.5;
+  const TUNNEL_LIGHT = 0.5; // how strongly the tunnel shows over the sky (part of the scene, not the feature)
+  // Part B (bars 13–16) is another world: a hard cut to the rectangle
+  // kaleidoscope, and back to the sky at bar 17.
+  const KALEIDO_BARS = [13, 17];
+  const neonSet = (h) =>
+    [
+      [h, 78, 100],
+      [h + 140, 72, 100],
+      [h + 230, 85, 42],
+      [h + 60, 68, 100],
+    ].map(([hh, ss, bb]) => hsbToRgb(hh, ss, bb).map((c) => c / 255));
+  const paintBackground = (t, flash, sheet, punch, hitIndex) => {
     const w = Math.max(2, Math.ceil(p.width / BG_SCALE));
     const h = Math.max(2, Math.ceil(p.height / BG_SCALE));
     if (!bgG || bgG.width !== w || bgG.height !== h) {
       bgG?.remove?.();
-      bgG = p.createGraphics(w, h);
+      bgG = p.createGraphics(w, h, p.WEBGL);
       bgG.pixelDensity(1);
-      bgGrad = document.createElement('canvas');
-      bgGrad.width = w;
-      bgGrad.height = h;
-      bgIdx = -2;
+      bgShader = bgG.createFilterShader(NO2_TUNNEL_FRAG);
     }
-    if (idx === bgIdx) return;
-    bgIdx = idx;
-    paintNo2Background(bgGrad.getContext('2d'), w, h, look, idx);
-  };
-
-  // One full-screen pass a frame (fill is the cost on software GL): darken
-  // the cached gradient into the small texture, then draw it once.
-  const composeBackground = (opacity) => {
-    const ctx = bgG.drawingContext;
-    ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'copy';
-    ctx.drawImage(bgGrad, 0, 0);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = `rgba(0,0,0,${opacity})`;
-    ctx.fillRect(0, 0, bgGrad.width, bgGrad.height);
-    ctx.restore();
+    bgShader.setUniform('uRes', [w, h]);
+    bgShader.setUniform('uT', t);
+    bgShader.setUniform('uBeat', (t * TRACK_BPM) / 60);
+    bgShader.setUniform('uSpeed', look.tunnelRate ?? 1);
+    bgShader.setUniform('uCells', look.tunnelRings ?? 18);
+    const set = neonSet(look.hue + Math.max(0, hitIndex) * PALETTE_TURN);
+    set.forEach((c, k) => bgShader.setUniform(`uP${k}`, c));
+    // The last two parts belong to the melody: the tunnel fades out over a
+    // beat into bar MELODY_FOCUS_BAR.
+    const focusAt = (MELODY_FOCUS_BAR - 1) * barSec;
+    const inKaleido = t >= (KALEIDO_BARS[0] - 1) * barSec && t < (KALEIDO_BARS[1] - 1) * barSec;
+    bgShader.setUniform('uScene', inKaleido ? 1 : 0);
+    bgShader.setUniform('uTunnel', TUNNEL_LIGHT * (1 - clamp01((t - focusAt + beatSec) / beatSec)));
+    bgShader.setUniform('uFlash', flash);
+    bgShader.setUniform('uPunch', punch);
+    bgShader.setUniform('uDim', sheet);
+    bgG.filter(bgShader);
   };
 
   p.setup = async () => {
@@ -325,6 +331,10 @@ const sketch = (p) => {
         melody: melody.map((n) => ({ ...n, dur: Math.max(0.25, n.dur) })),
         hero: hero.map((n) => ({ ...n, dur: Math.max(0.25, n.dur) })),
         drops: notesOf(tr[6]), // Fifth Drops Poly
+        // BBeat Kit (track 15): the groove that drops in at bar 5. Kicks punch
+        // the camera (the first one is the drop hit), snares flare the tunnel.
+        kicks: uniqueTicks(notesOf(tr[15]).filter((n) => n.midi === 36)),
+        snares: uniqueTicks(notesOf(tr[15]).filter((n) => n.midi === 37 || n.midi === 38)),
         synth,
         heroEnd: lastHero ? lastHero.t + Math.max(0.25, lastHero.dur) : Infinity,
         synthEnd: lastSynth ? lastSynth.t + lastSynth.dur : -Infinity,
@@ -364,26 +374,75 @@ const sketch = (p) => {
 
   // --- Layers --------------------------------------------------------------
 
+  // How dim the background sits: black until the background filter (track
+  // 13's CC 74) opens past FILTER_DARK, then up to BG_DIM_MIN as it opens
+  // fully. The filter sweeps across part A (about 0.56 at bar 5 → 1 at bar
+  // 13), so part A goes from near black to bright with it. Each background
+  // hit (track 12) flashes it, fading over BG_FLASH_SEC.
+  const FILTER_DARK = 0.52;
+  const BG_DIM_MIN = 0.05;
+  const BG_FLASH_SEC = 0.22;
+  // The last two parts (D, E): the melody slams (track 8) stand out — the
+  // background ducks by MELODY_DUCK under each slam, and the slams get a dark
+  // outline underneath. Elsewhere the quieter foreground (drum flyers,
+  // corridor, torus) sits at FG_DIM.
+  const MELODY_FOCUS_BAR = 21;
+  const MELODY_DUCK = 0.45;
+  const FG_DIM = 0.7;
+  // Melody cel tube, outside in: [stroke width × weight, colour gain, white?].
+  const MELODY_CEL = [
+    [2.2, 0.12, false], // ink outline
+    [1.6, 0.72, false], // shadow band
+    [1.0, 1, false], // lit core
+    [0.28, 1, true], // highlight
+  ];
+  const melodyFocus = (t) => t >= (MELODY_FOCUS_BAR - 1) * barSec;
+  const melodyEnv = (t) => {
+    const i = lastAt(ev.melody, t);
+    if (i < 0) return 0;
+    const n = ev.melody[i];
+    const dt = t - n.t;
+    return dt <= n.dur ? Math.exp(-dt / Math.max(0.35, n.dur * 0.6)) : 0;
+  };
+
+  // The bar-5 drop and the BBeat groove (track 15):
+  //   every kick punches the whole scene in by PUNCH, springing back over PUNCH_SEC;
+  //   the first kick (the drop) punches DROP_PUNCH, flashes white (DROP_FLASH,
+  //   gone in DROP_FLASH_SEC) and fires a neon shockwave frame out past the
+  //   screen edges over SHOCK_SEC;
+  //   every snare flares the tunnel (SNARE_FLARE).
+  const PUNCH = 0.045;
+  const PUNCH_SEC = 0.11;
+  const DROP_PUNCH = 0.22;
+  const DROP_FLASH = 0.35;
+  const DROP_FLASH_SEC = 0.12;
+  const SHOCK_SEC = 0.55;
+  const SNARE_FLARE = 0.55;
+  const since = (events, t) => {
+    const i = lastAt(events, t);
+    return i >= 0 ? t - events[i].t : Infinity;
+  };
+
   const drawBackground = (t) => {
-    const i = lastAt(ev.bgHits, t);
-    applyBackground(i);
-    let opacity = 1;
-    if (i >= 0) {
-      // Each hit slams the black sheet back on, then it opens over the note,
-      // never further than the filter allows.
-      const hit = ev.bgHits[i];
-      const fadeMax = ccStep(ev.fade13, t) * 0.5;
-      opacity = 1 - Math.min(clamp01((t - hit.t) / Math.max(hit.dur, 1e-3)), fadeMax);
-    }
+    const open = ev.fade13.length ? ccLerp(ev.fade13, t) : 1;
+    const lit = clamp01((open - FILTER_DARK) / (1 - FILTER_DARK));
+    let sheet = 1 - (1 - BG_DIM_MIN) * lit;
     // Outro: back to black over the bar after the last hero note.
-    opacity = Math.max(opacity, clamp01((t - ev.heroEnd) / barSec));
-    // Gradient quad + black sheet, unlit (lights come after), then clear the
-    // depth so the tunnel draws over it.
-    if (opacity >= 0.999) {
+    sheet = Math.max(sheet, clamp01((t - ev.heroEnd) / barSec));
+    if (melodyFocus(t)) sheet += (1 - sheet) * MELODY_DUCK * melodyEnv(t);
+    if (sheet >= 0.999) {
       p.background(0);
       return;
     }
-    composeBackground(opacity);
+    const i = lastAt(ev.bgHits, t);
+    const flash = Math.max(
+      i >= 0 ? Math.exp(-(t - ev.bgHits[i].t) / BG_FLASH_SEC) : 0,
+      SNARE_FLARE * Math.exp(-since(ev.snares, t) / 0.15),
+    );
+    const punch = Math.exp(-since(ev.kicks, t) / PUNCH_SEC);
+    paintBackground(t, flash, sheet, punch, i);
+    // The texture, unlit (lights come after), then clear the depth so the
+    // tunnel draws over it.
     p.push();
     p.noStroke();
     p.imageMode(p.CORNER);
@@ -414,7 +473,7 @@ const sketch = (p) => {
       const sy = p.lerp(y0, 0, prog);
       p.push();
       p.translate(sx * m, sy * m, z);
-      drawRectTubeFrame(p, frameW, frameH, tubeR, rgb(kick ? look.kick : look.snare));
+      drawRectTubeFrame(p, frameW, frameH, tubeR, rgb(kick ? look.kick : look.snare, FG_DIM));
       p.pop();
     }
   };
@@ -440,6 +499,7 @@ const sketch = (p) => {
     const slams = activeSince(ev.melody, t, 4)
       .filter((g) => t - g.t <= g.dur)
       .slice(-8);
+    const focus = melodyFocus(t);
     for (const g of slams) {
       const prog = (t - g.t) / g.dur;
       const c = hsbToRgb(melodyHue(look, g.midi), 90, 95);
@@ -448,11 +508,25 @@ const sketch = (p) => {
         const ease = 1 - Math.pow(1 - lp, 3);
         const grow = 0.66 + ease * 0.55 + L * 0.06;
         const a = Math.pow(1 - lp, 1.5) * (0.25 + 0.75 * filter) * (L ? 0.5 / L : 1);
+        const weight = (2 + 10 * filter + 8 * g.vel) * (1 - lp * 0.5) * (focus ? 1.6 : 1);
+        const x0 = (-p.width * grow) / 2;
+        const y0 = (-p.height * grow) / 2;
         p.push();
         p.noFill();
-        p.stroke(c[0], c[1], c[2], 255 * a);
-        p.strokeWeight((2 + 10 * filter + 8 * g.vel) * (1 - lp * 0.5));
-        p.rect((-p.width * grow) / 2, (-p.height * grow) / 2, p.width * grow, p.height * grow);
+        if (focus) {
+          // The last two parts: each slam is a cel-shaded tube — ink outline,
+          // a shadow band, the lit core, a soft highlight — so the theme pops.
+          for (const [wk, k, white] of MELODY_CEL) {
+            const col = white ? [255, 255, 255] : [c[0] * k, c[1] * k, c[2] * k];
+            p.stroke(col[0], col[1], col[2], 255 * a * (white ? 0.55 : 1));
+            p.strokeWeight(weight * wk);
+            p.rect(x0, y0, p.width * grow, p.height * grow);
+          }
+        } else {
+          p.stroke(c[0], c[1], c[2], 255 * a);
+          p.strokeWeight(weight);
+          p.rect(x0, y0, p.width * grow, p.height * grow);
+        }
         p.pop();
       }
     }
@@ -476,7 +550,7 @@ const sketch = (p) => {
         p.push();
         p.translate(0, 0, z);
         p.rotateZ(kp * 0.25 * look.spin);
-        drawRectTubeFrame(p, p.width * 0.86 * sc, p.height * 0.86 * sc, s * 0.003 * look.tube, rgb(c, dim));
+        drawRectTubeFrame(p, p.width * 0.86 * sc, p.height * 0.86 * sc, s * 0.003 * look.tube, rgb(c, dim * FG_DIM));
         p.pop();
       }
     }
@@ -519,7 +593,7 @@ const sketch = (p) => {
       p.translate(R * Math.cos(a), R * Math.sin(a), 0);
       p.rotateZ(a);
       p.rotateX(p.HALF_PI);
-      drawRectTubeFrame(p, fw * (1 + 0.3 * hot), fh * (1 + 0.3 * hot), tubeR, rgb(c, k2));
+      drawRectTubeFrame(p, fw * (1 + 0.3 * hot), fh * (1 + 0.3 * hot), tubeR, rgb(c, k2 * FG_DIM));
       p.pop();
     }
     p.pop();
@@ -720,6 +794,15 @@ const sketch = (p) => {
     const zHero = p.lerp(s * 0.95, zDeep, 0.15);
     const wave = p.fft?.waveform?.() ?? null;
 
+    // Kick punch (and the bigger drop punch): the whole scene zooms in, springs back.
+    const dropT = ev.kicks[0]?.t ?? Infinity;
+    const sinceDrop = t - dropT;
+    const punch =
+      PUNCH * Math.exp(-since(ev.kicks, t) / PUNCH_SEC) +
+      (sinceDrop >= 0 ? DROP_PUNCH * Math.exp(-sinceDrop / (PUNCH_SEC * 2.5)) : 0);
+    p.push();
+    p.scale(1 + punch);
+
     p.push();
     p.rotateZ(look.roll);
     drawFlyers(t, s, zStart, zDeep);
@@ -733,6 +816,41 @@ const sketch = (p) => {
     drawRing(t, s, zHero);
     if (hero) drawHero(t, s, zHero, hero, wave);
     p.pop();
+    p.pop();
+
+    if (sinceDrop >= 0 && sinceDrop < SHOCK_SEC) drawDrop(sinceDrop, s);
+  };
+
+  // The drop: a neon frame (and an echo) blasts out from the centre past the
+  // screen edges, over a white flash that snaps off. Fixed geometry, scaled,
+  // so the tube cache isn't churned.
+  const drawDrop = (since, s) => {
+    p.clearDepth();
+    p.noLights();
+    const frameW = s * 0.3;
+    const frameH = frameW / look.frameAspect;
+    const tubeR = s * 0.006 * look.tube;
+    for (const [lag, col] of [
+      [0, hsbToRgb(look.hue2, 35, 100)],
+      [0.08, hsbToRgb(look.hue, 70, 100)],
+    ]) {
+      const u = (since - lag) / (SHOCK_SEC - lag);
+      if (u <= 0 || u >= 1) continue;
+      const k = 0.4 + 7 * (1 - (1 - u) ** 3);
+      p.push();
+      p.scale(k, k, 1);
+      drawRectTubeFrame(p, frameW, frameH, tubeR, rgb(col));
+      p.pop();
+    }
+    const a = DROP_FLASH * Math.exp(-since / DROP_FLASH_SEC);
+    if (a > 0.01) {
+      p.clearDepth();
+      p.push();
+      p.noStroke();
+      p.fill(255, 255, 255, 255 * a);
+      p.plane(p.width * 2, p.height * 2);
+      p.pop();
+    }
   };
 
   p.mouseClicked = () => {
@@ -740,10 +858,9 @@ const sketch = (p) => {
   };
 
   // Called by the audio engine on loop/restart. Every frame is drawn from song
-  // time, so there is no per-pass state to clear — only the background cache,
-  // and the look rolls over when ?auto is on.
+  // time, so there is no per-pass state to clear; the look rolls over when
+  // ?auto is on.
   p.resetAnimation = () => {
-    bgIdx = -2;
     if (reel.auto && !p.captureInProgress) stepSeed(1);
   };
 
