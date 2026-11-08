@@ -18,8 +18,8 @@ importers:
         specifier: ^0.2.0
         version: 0.2.0(p5@2.2.3)
       '@labcat2020/p5.audioreactive-capture':
-        specifier: ^0.1.4
-        version: 0.1.4(p5@2.2.3)
+        specifier: ^0.1.5
+        version: 0.1.5(p5@2.2.3)
       astro:
         specifier: ^6.0.8
         version: 6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3)
@@ -476,8 +476,8 @@ packages:
       astro: ^6.0.8
       sass-embedded: ^1.98.0
 
-  '@labcat2020/p5.audioreactive-capture@0.1.4':
-    resolution: {integrity: sha512-ov0N0m3/g7ZRsi1LjylX+4fw6kyhOV3SwwVGAw/QgT9w1uQX2w+OslGO1dTjoJYdB5zYLig9V0UfOH1cNdFk1w==}
+  '@labcat2020/p5.audioreactive-capture@0.1.5':
+    resolution: {integrity: sha512-Lln77pz+wAZGuFN8Ge8IEbSdk8qgGw6AMQLM5xFLyP0JyMKLhqs/PlkHCJF3TH4BRRvKKm2iZ2y6PJIRn9qUPA==}
     peerDependencies:
       p5: 2.2.3
 
@@ -2856,7 +2856,7 @@ snapshots:
       normalize.css: 8.0.1
       sass-embedded: 1.98.0
 
-  '@labcat2020/p5.audioreactive-capture@0.1.4(p5@2.2.3)':
+  '@labcat2020/p5.audioreactive-capture@0.1.5(p5@2.2.3)':
     dependencies:
       jszip: 3.10.1
       p5: 2.2.3

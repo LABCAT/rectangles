@@ -365,7 +365,7 @@ const sketch = (p) => {
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
-      p.midiBpm = 152;
+      p.midiBpm = NO1_BPM;
     });
 
     if (midiData?.tracks) {
