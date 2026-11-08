@@ -313,6 +313,10 @@ const sketch = (p) => {
 
     setSeed(seed);
 
+    // ?part= → p.captureRange BEFORE the song loads: capture resolves it when it
+    // starts, which can be before setup finishes. Re-applied after load to cap `end`.
+    applyPart(p, NO2_PARTS, reel.part, { bpm: TRACK_BPM });
+
     await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
       p.midiBpm = TRACK_BPM;
@@ -348,7 +352,7 @@ const sketch = (p) => {
       p.fft.gain.toDestination();
     }
 
-    // ?part= → p.captureRange (capture renders just that part).
+    // Re-apply now the song duration is known (clamps `end`).
     applyPart(p, NO2_PARTS, reel.part, { bpm: TRACK_BPM });
     // Live: start on the part (?part= or the first) and loop it.
     partRange = resolvePart(NO2_PARTS, partId, { bpm: TRACK_BPM });

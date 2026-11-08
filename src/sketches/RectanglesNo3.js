@@ -446,6 +446,10 @@ const sketch = (p) => {
     resetCueState();
     logLook();
 
+    // ?part= → p.captureRange BEFORE the song loads: capture resolves it when it
+    // starts, which can be before setup finishes. Re-applied after load to cap `end`.
+    applyPart(p, NO3_PARTS, reel.part, { bpm: NO3_BPM });
+
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
       p.midiBpm = 112;
@@ -477,8 +481,8 @@ const sketch = (p) => {
       }
     }
 
-    // ?part= → p.captureRange (capture renders just that part); without it a
-    // capture renders the whole track. Live: start on the part (?part= or A).
+    // Re-apply now the song duration is known (clamps `end`). Live: start on
+    // the part (?part= or A).
     applyPart(p, NO3_PARTS, reel.part, { bpm: NO3_BPM });
     partRange = partRangeOf(partId);
     p._playbackFrozenSec = partRange.start;
