@@ -1,7 +1,21 @@
 import p5 from 'p5';
 import '@lib/p5.audioReact.js';
 import ColorGenerator from '@lib/p5.colorGenerator.js';
+import initCapture from '@labcat2020/p5.audioreactive-capture';
+import { createDomLayerCaptureBackground } from '@labcat2020/p5.audioreactive-capture/dom-layer';
+import { compositeDomCaptureExtension } from '@labcat2020/p5.audioreactive-capture/composite';
 import { getFullWindowGradientCss } from '@sketches/functions/fullWindowGradientCss.js';
+import { readReelParams, applyPart, randomSeed } from '../lib/reelParams.js';
+import { createNo1Look, NO1_PARTS, NO1_BPM } from '../lib/no1Look.js';
+
+// Reels: ?seed= picks a reproducible variation (rectangle hues, background
+// gradients, swell rates; no seed = a random one, logged to the console);
+// ?part=a|b plays and loops just that part's bars (see NO1_PARTS), and sets
+// p.captureRange so a capture renders just that section. Prev/next in the
+// control panel walk the parts, and next on the last part goes on to
+// RectanglesNo2. With no ?part the page plays part A (a capture without ?part
+// still renders the whole track). N / P step the seed, R picks a random one.
+// The address bar follows (?part=&seed=).
 
 const base = import.meta.env.BASE_URL || './';
 const audioUrl = base + 'audio/RectanglesNo1.mp3';
@@ -12,7 +26,7 @@ const SQUARE_WAVE_STEPS = 240;
 const FFT_RECT_GAP_MUL = 1.08;
 /** Box-sample radius on waveform (reduces scratchy edge jitter). */
 const RECT_WAVE_SMOOTH_R = 6;
-/** Long track-3 notes: half-side starts at 0 and adds pixels per frame only while the MIDI gate is open. */
+/** Long track-3 notes: half-side starts at 0 and grows (px per 60fps frame) only while the MIDI gate is open. */
 const FFT_RECT_LONG_NOTE_TICKS = 50000;
 /** Minimum half-side growth per frame; at ~1900×1000 canvas area the effective rate matches this value. */
 const FFT_RECT_HALF_SIDE_GROW_PX = 8;
@@ -23,8 +37,6 @@ const fftRectHalfSideGrowPxPerFrame = (p) => {
   const scale = Math.sqrt(area / FFT_RECT_HALF_SIDE_GROW_REF_AREA);
   return FFT_RECT_HALF_SIDE_GROW_PX * Math.max(1, scale);
 };
-/** Track 3: open all four FFT gates when `currentCue` exceeds this (see `onTrack3Cue`). */
-const FFT_RECT_ALL_FOUR_AFTER_CUE = 155;
 
 const noteDurationSec = (p, note, fallbackSec) =>
   Math.max(
@@ -246,31 +258,40 @@ const drawBlackFadeRects = (p) => {
 };
 
 const sketch = (p) => {
+  const reel = readReelParams(window.location.search);
+  let look = createNo1Look(reel.seed);
+  p.reelSeed = look.seed;
+
   p.fft = null;
   p.fftRectColors = null;
   p.bgGradientEl = null;
-  p.blackFade = { startSec: 0, durationSec: 0 };
-  p.fftRectGateStartSec = [0, 0, 0, 0];
-  p.fftRectGateEndSec = [0, 0, 0, 0];
-  p.fftRectGrowHalfSide = [null, null, null, null];
-  p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
+  /** Cue-driven state, as it is before the first note. */
+  const resetCueState = () => {
+    p.blackFade = { startSec: 0, durationSec: 0 };
+    p.fftRectGateStartSec = [0, 0, 0, 0];
+    p.fftRectGateEndSec = [0, 0, 0, 0];
+    p.fftRectGrowHalfSide = [null, null, null, null];
+    p.fftRectGrowHalfSideRate = [1, 1, 1, 1];
+    p.fftRectGrowStartSec = [0, 0, 0, 0];
+  };
+  resetCueState();
+  /** ?part's { start, end } in seconds (set in setup), and whether it has started playing. */
+  let partRange = null;
+  let partStarted = false;
 
   p.onTrack11Cue = function (note) {
     const s = note.time;
     const e = s + noteDurationSec(p, note, 0.22);
     const longNote = (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS;
 
-    if (
-      Number(note.currentCue) % 25 === 1 ||
-      (note.durationTicks ?? 0) > FFT_RECT_LONG_NOTE_TICKS
-      // Number(note.currentCue) > FFT_RECT_ALL_FOUR_AFTER_CUE
-    ) {
+    if (Number(note.currentCue) % 25 === 1 || longNote) {
       for (let i = 0; i < 4; i++) {
         p.fftRectGateStartSec[i] = s;
         p.fftRectGateEndSec[i] = e;
         if (longNote) {
           p.fftRectGrowHalfSide[i] = 0;
-          p.fftRectGrowHalfSideRate[i] = p.random(0.5, 1.75);
+          p.fftRectGrowStartSec[i] = s;
+          p.fftRectGrowHalfSideRate[i] = look.growRate(note.currentCue, i, true);
         } else {
           p.fftRectGrowHalfSide[i] = null;
         }
@@ -282,7 +303,8 @@ const sketch = (p) => {
     mergeFftGate(p, idx, s, e);
     if (longNote) {
       p.fftRectGrowHalfSide[idx] = 0;
-      p.fftRectGrowHalfSideRate[idx] = p.random(0.62, 1.45);
+      p.fftRectGrowStartSec[idx] = s;
+      p.fftRectGrowHalfSideRate[idx] = look.growRate(c, idx, false);
     } else {
       p.fftRectGrowHalfSide[idx] = null;
     }
@@ -296,10 +318,13 @@ const sketch = (p) => {
           ? (note.durationTicks / p.midiPpq) * (60 / (p.midiBpm || 120))
           : 0.5)
     );
-    const t = p.getSongPlaybackTime();
+    // The chord's own time (not the clock), so cues replayed ahead of a part land the same.
+    const t = Number.isFinite(note.time) ? note.time : p.getSongPlaybackTime();
     if (Number.isFinite(t)) {
       p.blackFade = { startSec: t, durationSec };
     }
+    // Each chord's gradient comes from (seed, cue), whatever ran before it.
+    p.randomSeed(look.bgSeed(note.currentCue));
     applyBgGradient(this);
   };
 
@@ -319,12 +344,28 @@ const sketch = (p) => {
     p.bgGradientEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
     bgWrap.appendChild(p.bgGradientEl);
     document.body.insertBefore(bgWrap, document.body.firstChild);
-    p.randomSeed(Date.now());
+    p.bgWrapperEl = bgWrap;
+    initCapture(p, {
+      prefix: 'RectanglesNo1',
+      enabled: false,
+      captureCSSBackground: true,
+      extension: compositeDomCaptureExtension({ background: createDomLayerCaptureBackground(bgWrap) }),
+    });
+    // Frames depend on song time alone (cues, buffer waveform, time-based swell), so a
+    // section cut can skip the draws before its start.
+    p.captureSeekable = true;
+    partRange = applyPart(p, NO1_PARTS, partId, { bpm: NO1_BPM });
+    // Live play defaults to part A; a capture only narrows to a part ?part names.
+    if (!reel.part) p.captureRange = null;
+    p.loopAudio = !!partRange;
+    syncUrl();
+    logLook();
+    p.randomSeed(look.bgSeed(0));
     applyBgGradient(p);
 
     const midiData = await p.loadSong(audioUrl, midiUrl, (data) => {
       p.midiPpq = data.header.ppq;
-      p.midiBpm = 152;
+      p.midiBpm = NO1_BPM;
     });
 
     if (midiData?.tracks) {
@@ -332,9 +373,19 @@ const sketch = (p) => {
       p.scheduleCueSet(midiData.tracks[1]?.notes ?? [], 'onTrack1Cue');
     }
 
-    const baseHue = Math.random() * 360;
-    const colorGen = new ColorGenerator(p, p.color(baseHue, 92, 94));
-    p.fftRectColors = colorGen.getTetradic();
+    p.fftRectColors = rectColors();
+    guardStaleStops();
+    if (partRange) p._playbackFrozenSec = partRange.start;
+    emitTrack();
+    window.addEventListener('labcat:track-prev', () => stepPart(-1));
+    window.addEventListener('labcat:track-next', () => stepPart(1));
+    window.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'n') stepSeed(1);
+      else if (k === 'p') stepSeed(-1);
+      else if (k === 'r') setSeed(randomSeed());
+    });
 
     p.fft = new p5.FFT();
     if (p.song) {
@@ -342,11 +393,163 @@ const sketch = (p) => {
       p.song.connect(p.fft);
       p.fft.gain.toDestination();
     }
+  };
 
+  // --- Parts, seeds and the address bar -------------------------------------
+
+  const PART_IDS = Object.keys(NO1_PARTS);
+  const PART_TITLES = { a: 'Part A · groove', b: 'Part B · breakdown' };
+  let partId = NO1_PARTS[reel.part] ? reel.part : PART_IDS[0];
+  /** Next after the last part: the series' next sketch. */
+  const NEXT_SKETCH_URL = `${base}number-2/?part=a`;
+
+  const rectColors = () => new ColorGenerator(p, p.color(look.baseHue, 92, 94)).getTetradic();
+
+  const syncUrl = () => {
+    const q = new URLSearchParams(window.location.search);
+    if (partId) q.set('part', partId);
+    else q.delete('part');
+    q.set('seed', look.seed);
+    window.history.replaceState(null, '', `${window.location.pathname}?${q}`);
+  };
+
+  const emitTrack = () => {
+    const title = PART_TITLES[partId] ?? `Part ${partId.toUpperCase()}`;
+    window.dispatchEvent(new CustomEvent('labcat:track', { detail: { title } }));
+  };
+
+  const logLook = () =>
+    console.log(`[RectanglesNo1] seed ${look.seed} · ${look.palette} · turn ${look.turn}${partId ? ` · part ${partId}` : ''}`);
+
+  // Rebuild the cue-driven state at song time `t`, as a capture would have it:
+  // reset, then fire every cue before `t` at once.
+  const replayCuesBefore = (t) => {
+    resetCueState();
+    p.randomSeed(look.bgSeed(0));
+    applyBgGradient(p);
+    const before = (p._midiTransportCues ?? []).filter((c) => c.time < t).sort((a, b) => a.time - b.time);
+    for (const { fn, note } of before) fn.call(p, note);
+  };
+
+  // Tone's Player fires p5.sound's onended (its onstop) for every source that
+  // stops, and a seek stops the old source, so the lib would take a seek for
+  // the song ending (and with loopAudio, each restart's stop() fires it again,
+  // forever). The stale event can land >1s late on a busy machine, so a timer
+  // can't fence it: count the sources each jump stops and swallow that many.
+  let staleStops = 0;
+  const guardStaleStops = () => {
+    const sf = p.song?.soundfile;
+    if (!sf || sf._no1Guarded) return;
+    sf._no1Guarded = true;
+    const libOnStop = sf.onstop;
+    sf.onstop = function (...args) {
+      if (staleStops > 0) {
+        staleStops--;
+        return;
+      }
+      return libOnStop?.apply(this, args);
+    };
+  };
+
+  // Make the next play() start the audio at `sec` instead of 0.
+  const startNextPlayAt = (sec) => {
+    const sf = p.song?.soundfile;
+    if (!sf?.start) return;
+    const start = sf.start;
+    sf.start = function (time, offset, duration) {
+      sf.start = start;
+      return start.call(this, time, offset ?? sec, duration);
+    };
+  };
+
+  // Move audio, clock and cue state to `sec`, playing, paused or before the first play.
+  const jumpTo = (sec) => {
+    replayCuesBefore(sec);
+    const sf = p.song?.soundfile;
+    if (sf?.state === 'started' && p.song.isPlaying()) {
+      const sources = sf._activeSources?.size ?? 1;
+      try {
+        sf.seek(sec);
+        staleStops += sources;
+      } catch (e) {
+        console.warn('[RectanglesNo1] seek failed', e);
+      }
+    } else if (sf?.state === 'started') {
+      // Paused (p5.sound pauses at rate 0): a seek would start a zero-rate
+      // source that Tone ends at once. Stop cleanly; the next play starts at `sec`.
+      staleStops += sf._activeSources?.size ?? 1;
+      sf.stop();
+      p.song.paused = false;
+      p.song.playing = false;
+      startNextPlayAt(sec);
+    } else {
+      startNextPlayAt(sec);
+    }
+    if (p.song?.isPlaying()) {
+      p._playbackSongSecondsAtWallStart = sec;
+      p._playbackWallStartPerf = performance.now();
+      p._reindexMidiCues(sec);
+    } else {
+      p._playbackFrozenSec = sec;
+    }
+  };
+
+  const setPart = (id) => {
+    partId = id;
+    partRange = applyPart(p, NO1_PARTS, id, { bpm: NO1_BPM });
+    p.loopAudio = !!partRange;
+    syncUrl();
+    emitTrack();
+    logLook();
+    if (!partRange) return;
+    partStarted = !!p.song?.soundfile && p.song.soundfile.state === 'started';
+    if (partStarted) jumpTo(partRange.start);
+    else p._playbackFrozenSec = partRange.start;
+  };
+
+  // Prev on the first part restarts it; next on the last goes to RectanglesNo2.
+  const stepPart = (d) => {
+    const next = PART_IDS.indexOf(partId) + d;
+    if (next >= PART_IDS.length) {
+      window.location.assign(NEXT_SKETCH_URL);
+      return;
+    }
+    setPart(PART_IDS[Math.max(0, next)]);
+  };
+
+  // A new seed shows at once: new colours, and the cues so far replayed with it.
+  const setSeed = (next) => {
+    look = createNo1Look(String(next));
+    p.reelSeed = look.seed;
+    if (p.fftRectColors) p.fftRectColors = rectColors();
+    const t = p.getSongPlaybackTime();
+    replayCuesBefore(Number.isFinite(t) ? t : 0);
+    syncUrl();
+    logLook();
+  };
+
+  const stepSeed = (d) => {
+    const n = Number(look.seed);
+    setSeed(Number.isInteger(n) ? Math.max(0, n + d) : randomSeed());
+  };
+
+  const togglePlaybackBase = p.togglePlayback.bind(p);
+  p.togglePlayback = () => {
+    if (partRange && !partStarted && p.audioLoaded && p.song && !p.captureEnabled && !p.song.isPlaying()) {
+      partStarted = true;
+      replayCuesBefore(partRange.start);
+      p._playbackFrozenSec = partRange.start;
+      startNextPlayAt(partRange.start);
+    }
+    togglePlaybackBase();
   };
 
   p.draw = () => {
     if (!p.fft) return;
+
+    if (partRange && !p.captureInProgress && p.song?.isPlaying() && p.getSongPlaybackTime() >= partRange.end) {
+      jumpTo(partRange.start);
+    }
 
     p.clear();
 
@@ -401,14 +604,14 @@ const sketch = (p) => {
         tPlay < p.fftRectGateEndSec[i];
       const src = gated ? waveSm : silent;
       let hs = halfSide;
-      const g = p.fftRectGrowHalfSide[i];
-      if (typeof g === 'number') {
-        hs = p.max(g, 0.2);
-        if (gated && (p.song?.isPlaying() || p.captureInProgress)) {
-          const step =
-            fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
-          p.fftRectGrowHalfSide[i] = g + step;
-        }
+      if (typeof p.fftRectGrowHalfSide[i] === 'number') {
+        // Swell = open-gate time since the long note × the per-frame rate at 60fps: a
+        // function of song time, so live play, full captures and section cuts match.
+        const t0 = p.fftRectGrowStartSec[i];
+        const t1 = Math.max(t0, p.fftRectGateEndSec[i]);
+        const grownSec = Number.isFinite(tPlay) ? p.constrain(tPlay, t0, t1) - t0 : 0;
+        const rate = fftRectHalfSideGrowPxPerFrame(p) * (p.fftRectGrowHalfSideRate[i] ?? 1);
+        hs = p.max(grownSec * 60 * rate, 0.2);
       }
       drawFftRectOutline(p, src, wlen, rx, ry, hs, p.fftRectColors[i]);
     }

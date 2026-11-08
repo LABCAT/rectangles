@@ -13,9 +13,9 @@
     "check": "astro check"
   },
   "dependencies": {
-    "@labcat2020/animation-lab": "0.2.1",
+    "@labcat2020/animation-lab": "0.2.3",
     "@labcat2020/p5.audioreactive": "^0.2.0",
-    "@labcat2020/p5.audioreactive-capture": "^0.1.4",
+    "@labcat2020/p5.audioreactive-capture": "^0.1.5",
     "astro": "^6.0.8",
     "p5": "2.2.3"
   },
