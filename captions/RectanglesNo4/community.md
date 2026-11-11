@@ -1,4 +1,4 @@
-<!-- DRAFT — pending music. Placeholder audio; finalise with the founder once the new Reason track lands. Strip this comment before posting. -->
+<!-- DRAFT — music: a copy of #RectanglesNo3's track. Finalise with the founder. Strip this comment before posting. -->
 
 #RectanglesNo4 - Audio reactive and generative animation
 

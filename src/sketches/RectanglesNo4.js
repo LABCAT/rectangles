@@ -6,20 +6,26 @@ import vert from '../shaders/no4Mondrian.vert?raw';
 import frag from '../shaders/no4Mondrian.frag?raw';
 import { readReelParams, reelSearch, randomSeed, applyPart, resolvePart, barSeconds } from '../lib/reelParams.js';
 import { createNo4Look, describeNo4, no4Energy, no4PhraseSeed, NO4_DEFAULT_BPM, NO4_PARTS } from '../lib/no4Look.js';
+import { buildNo4Cues, no4CueUniforms } from '../lib/no4Cues.js';
 
 // #RectanglesNo4 — psychedelic WebGL Mondrian.
 //
 // One shader (src/shaders/no4Mondrian.frag) and a seeded look
 // (src/lib/no4Look.js): black-line split-tree compositions in Mondrian's
-// primaries, pushed with beat-locked line moves, subdivision builds, colour
-// cycling, folds / kaleidoscope, portal zoom and warp.
+// primaries, pushed psychedelic but rectangles only: line moves, subdivision
+// builds, colour cycling and per-cell hues, mirror folds and mirrored tiles,
+// portal zoom and a per-axis stretch that keeps every line straight.
 //
-// Music-agnostic: the clock is seconds and every beat / bar comes from the
-// ?bpm= param (default NO4_DEFAULT_BPM). The audio is a PLACEHOLDER and only
-// feeds a small generic level; no MIDI cues are wired yet.
+// Music: a copy of #RectanglesNo3's track and MIDI (112 BPM). The MIDI drives
+// the events (src/lib/no4Cues.js): guitar riffs re-roll the composition,
+// clavinet notes slide lines, the bass bends the grid, kick and snare punch
+// and flash, the filter wheeler steps the colours. Cues are looked up from
+// the song time, not scheduled, so seeks and captures land on the same frame.
+// The beat clock (?bpm=, default NO4_DEFAULT_BPM) drives the continuous
+// motion, the parts and the fallback when the MIDI is missing.
 //
-//   ?seed=  look, reproducible           ?part=  a / b / c / d (provisional) to capture
-//   ?bpm=   motion tempo (default 120)   ?beats= loop length in beats (default 16)
+//   ?seed=  look, reproducible           ?part=  a–g, the track's 4-bar phrases
+//   ?bpm=   motion tempo (default 112)   ?beats= loop length in beats (default 16)
 //   ?speed= continuous motion speed      ?t=     freeze at a time in seconds (stills)
 //   ?auto=  1/0 new look every 8-bar phrase (default on unless ?seed is given)
 //   ?uX=    override any scalar uniform, e.g. ?uFold=6
@@ -36,16 +42,6 @@ const audioUrl = base + 'audio/RectanglesNo4.mp3';
 const midiUrl = base + 'audio/RectanglesNo4.mid';
 
 const PHRASE_BARS = 8;
-
-// TODO(music): cues when the new Reason track lands. The placeholder MIDI is
-// not wired on purpose. Once the founder picks a track, map its MIDI tracks
-// here (index → handler) and schedule them with p.scheduleCueSet in setup —
-// e.g. a lead that kicks line moves, drums that fire the beat pump — and
-// re-cut NO4_PARTS (src/lib/no4Look.js) to its phrases and tempo.
-// eslint-disable-next-line no-unused-vars
-const MUSIC_CUES = [
-  // { track: 0, handler: 'onLeadCue', poly: false },
-];
 
 const sketch = (p) => {
   p.loopAudio = true;
@@ -116,6 +112,7 @@ const sketch = (p) => {
   // Generic audio level: RMS of the decoded buffer around t. A pure function
   // of time (no smoothing state), so it is the same live and in capture.
   // Kept small on purpose (ledger §12: FFT barely reads on full-frame shaders).
+  let cues = null;
   let channel = null;
   const levelAt = (t) => {
     if (!channel) {
@@ -182,10 +179,10 @@ const sketch = (p) => {
       if (key === 'f') p.toggleFpsIndicator({ position: 'bottom-left' });
     });
 
-    await p.loadSong(audioUrl, midiUrl);
+    const midi = await p.loadSong(audioUrl, midiUrl);
+    if (midi?.tracks) cues = buildNo4Cues(midi);
     // Clamp the part to the loaded song.
     applyPart(p, NO4_PARTS, reel.part, { bpm });
-    // TODO(music): schedule MUSIC_CUES here once the new track's MIDI lands.
   };
 
   p.draw = () => {
@@ -199,6 +196,7 @@ const sketch = (p) => {
     shader.setUniform('uEnergy', no4Energy(t, bpm));
     shader.setUniform('uLevel', levelAt(t));
     shader.setUniform('uFade', fadeAt(t));
+    for (const [name, value] of Object.entries(no4CueUniforms(cues, t))) shader.setUniform(name, value);
     for (const [name, value] of Object.entries(l.uniforms)) shader.setUniform(name, value);
     p.plane(p.width, p.height);
   };
