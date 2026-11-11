@@ -16,7 +16,8 @@ import { createNo4Look, describeNo4, no4Energy, no4PhraseSeed, NO4_DEFAULT_BPM, 
 //
 // Music-agnostic: the clock is seconds and every beat / bar comes from the
 // ?bpm= param (default NO4_DEFAULT_BPM, 112). The audio is a copy of
-// #RectanglesNo3's track; it feeds a small generic level, no MIDI cues yet.
+// #RectanglesNo3's track (MIDI too); it feeds a small generic level, no MIDI
+// cues wired yet.
 //
 //   ?seed=  look, reproducible           ?part=  a–g, the track's 4-bar phrases
 //   ?bpm=   motion tempo (default 112)   ?beats= loop length in beats (default 16)
@@ -37,10 +38,11 @@ const midiUrl = base + 'audio/RectanglesNo4.mid';
 
 const PHRASE_BARS = 8;
 
-// TODO(music): MIDI cues. public/audio/RectanglesNo4.mid is still the old
-// placeholder's, not the No3 track's. With the matching MIDI, map its tracks
-// here (index → handler) and schedule them with p.scheduleCueSet in setup —
-// e.g. the guitar kicks line moves, drums fire the beat pump.
+// TODO(music): MIDI cues. public/audio/RectanglesNo4.mid is a copy of the
+// No3 track's MIDI (tracks as in RectanglesNo3.js: 3 guitar, 5 clavinet,
+// 4 bass, 8 drums, 0 filter wheeler). Map them here (index → handler) and
+// schedule them with p.scheduleCueSet in setup — e.g. the guitar kicks line
+// moves, drums fire the beat pump. Keep handlers time-pure for capture.
 // eslint-disable-next-line no-unused-vars
 const MUSIC_CUES = [
   // { track: 0, handler: 'onLeadCue', poly: false },
@@ -184,7 +186,7 @@ const sketch = (p) => {
     await p.loadSong(audioUrl, midiUrl);
     // Clamp the part to the loaded song.
     applyPart(p, NO4_PARTS, reel.part, { bpm });
-    // TODO(music): schedule MUSIC_CUES here once the matching MIDI is in.
+    // TODO(music): schedule MUSIC_CUES here.
   };
 
   p.draw = () => {
