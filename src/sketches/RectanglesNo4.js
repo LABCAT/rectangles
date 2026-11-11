@@ -6,6 +6,7 @@ import vert from '../shaders/no4Mondrian.vert?raw';
 import frag from '../shaders/no4Mondrian.frag?raw';
 import { readReelParams, reelSearch, randomSeed, applyPart, resolvePart, barSeconds } from '../lib/reelParams.js';
 import { createNo4Look, describeNo4, no4Energy, no4PhraseSeed, NO4_DEFAULT_BPM, NO4_PARTS } from '../lib/no4Look.js';
+import { buildNo4Cues, no4CueUniforms } from '../lib/no4Cues.js';
 
 // #RectanglesNo4 — psychedelic WebGL Mondrian.
 //
@@ -14,10 +15,13 @@ import { createNo4Look, describeNo4, no4Energy, no4PhraseSeed, NO4_DEFAULT_BPM, 
 // primaries, pushed with beat-locked line moves, subdivision builds, colour
 // cycling, folds / kaleidoscope, portal zoom and warp.
 //
-// Music-agnostic: the clock is seconds and every beat / bar comes from the
-// ?bpm= param (default NO4_DEFAULT_BPM, 112). The audio is a copy of
-// #RectanglesNo3's track (MIDI too); it feeds a small generic level, no MIDI
-// cues wired yet.
+// Music: a copy of #RectanglesNo3's track and MIDI (112 BPM). The MIDI drives
+// the events (src/lib/no4Cues.js): guitar riffs re-roll the composition,
+// clavinet notes slide lines, the bass bends the grid, kick and snare punch
+// and flash, the filter wheeler steps the colours. Cues are looked up from
+// the song time, not scheduled, so seeks and captures land on the same frame.
+// The beat clock (?bpm=, default NO4_DEFAULT_BPM) drives the continuous
+// motion, the parts and the fallback when the MIDI is missing.
 //
 //   ?seed=  look, reproducible           ?part=  a–g, the track's 4-bar phrases
 //   ?bpm=   motion tempo (default 112)   ?beats= loop length in beats (default 16)
@@ -37,16 +41,6 @@ const audioUrl = base + 'audio/RectanglesNo4.mp3';
 const midiUrl = base + 'audio/RectanglesNo4.mid';
 
 const PHRASE_BARS = 8;
-
-// TODO(music): MIDI cues. public/audio/RectanglesNo4.mid is a copy of the
-// No3 track's MIDI (tracks as in RectanglesNo3.js: 3 guitar, 5 clavinet,
-// 4 bass, 8 drums, 0 filter wheeler). Map them here (index → handler) and
-// schedule them with p.scheduleCueSet in setup — e.g. the guitar kicks line
-// moves, drums fire the beat pump. Keep handlers time-pure for capture.
-// eslint-disable-next-line no-unused-vars
-const MUSIC_CUES = [
-  // { track: 0, handler: 'onLeadCue', poly: false },
-];
 
 const sketch = (p) => {
   p.loopAudio = true;
@@ -117,6 +111,7 @@ const sketch = (p) => {
   // Generic audio level: RMS of the decoded buffer around t. A pure function
   // of time (no smoothing state), so it is the same live and in capture.
   // Kept small on purpose (ledger §12: FFT barely reads on full-frame shaders).
+  let cues = null;
   let channel = null;
   const levelAt = (t) => {
     if (!channel) {
@@ -183,10 +178,10 @@ const sketch = (p) => {
       if (key === 'f') p.toggleFpsIndicator({ position: 'bottom-left' });
     });
 
-    await p.loadSong(audioUrl, midiUrl);
+    const midi = await p.loadSong(audioUrl, midiUrl);
+    if (midi?.tracks) cues = buildNo4Cues(midi);
     // Clamp the part to the loaded song.
     applyPart(p, NO4_PARTS, reel.part, { bpm });
-    // TODO(music): schedule MUSIC_CUES here.
   };
 
   p.draw = () => {
@@ -200,6 +195,7 @@ const sketch = (p) => {
     shader.setUniform('uEnergy', no4Energy(t, bpm));
     shader.setUniform('uLevel', levelAt(t));
     shader.setUniform('uFade', fadeAt(t));
+    for (const [name, value] of Object.entries(no4CueUniforms(cues, t))) shader.setUniform(name, value);
     for (const [name, value] of Object.entries(l.uniforms)) shader.setUniform(name, value);
     p.plane(p.width, p.height);
   };

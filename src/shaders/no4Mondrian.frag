@@ -5,10 +5,13 @@
 // evaluated per pixel from hashes, so it costs a handful of hashes per level
 // and never needs a CPU pass. On top of the classic picture (paper, black
 // lines, red / yellow / blue blocks):
-//   - lines slide to new positions on the beat (inner levels every uStep
-//     beats, the top line every uTopBeats), the whole structure re-rolls
-//     every 2 × uTopBeats beats, and with uBuild the tree grows one level per
-//     beat and resets on the bar
+//   - MIDI (uCues): every guitar riff note re-rolls the composition,
+//     clavinet notes slide inner lines, the bass bends the grid, kick and
+//     snare punch and flash the lines colour, the filter wheeler steps the
+//     colours. Without the MIDI the BPM clock drives the same events: lines
+//     slide every uStep / uTopBeats beats, the structure re-rolls every
+//     2 × uTopBeats beats
+//   - with uBuild the tree grows one level per beat and resets on the bar
 //   - colours rotate cell to cell (uCycleBeats) and the accent hues spin
 //     (uHueSpin), op-art square rings run through some cells (uRings)
 //   - folds (mirror / quad / kaleidoscope), a 45° lozenge (Mondrian's own
@@ -63,6 +66,16 @@ uniform float uAberr;       // chromatic aberration
 uniform float uGlow;        // line glow (neon / ink light)
 uniform float uShade;       // darken deeper portal levels
 uniform float uAudio;       // how much uLevel shows
+
+// MIDI cues (src/lib/no4Cues.js), looked up from the song time each frame.
+uniform float uCues;        // 1 when the MIDI is loaded, else the BPM clock drives events
+uniform float uRoll;        // guitar notes so far: each one re-rolls the composition
+uniform float uClav;        // clavinet notes so far: each one slides some inner lines
+uniform float uClavAge;     // seconds since the last clavinet note
+uniform float uBassEnv;     // 1 → 0 after each bass note: the grid bends
+uniform float uKick;        // 1 → 0 after each kick: the beat punch
+uniform float uSnare;       // 1 → 0 after each snare: lines flash colour, fringe burst
+uniform float uWheel;       // filter-wheeler notes so far: colours step cell to cell
 
 uniform vec3 uPaper;
 uniform vec3 uInk;
@@ -152,11 +165,27 @@ float compose(vec2 p, vec2 box, float n, out vec2 lo, out vec2 hi, out float id)
     float a1 = alongX ? hi.x : hi.y;
     float ext = alongX ? box.x : box.y;
     if (a1 - a0 < (uQuant > 0.5 ? 4.0 * ext / uQuant : 0.14)) break;
-    // Line moves: the top line every uTopBeats, inner lines every uStep.
-    float period = lv < 0.5 ? uTopBeats : uStep;
-    float k = gBeat / period;
-    float m = floor(k);
-    float ph = clamp((k - m) * period / uSnap, 0.0, 1.0);
+    float m;
+    float ph;
+    if (uCues > 0.5) {
+      // Clavinet: each note slides the inner lines of 1 in (uStep + 1) cells,
+      // staggered per cell. The top line holds; the guitar re-rolls it.
+      if (lv < 0.5) {
+        m = 0.0;
+        ph = 1.0;
+      } else {
+        float div = uStep + 1.0;
+        float stagger = floor(h.z * div);
+        m = floor((uClav + stagger) / div);
+        ph = mod(uClav + stagger, div) < 0.5 ? clamp(uClavAge * uBpm / 60.0 / uSnap, 0.0, 1.0) : 1.0;
+      }
+    } else {
+      // No MIDI: the top line moves every uTopBeats, inner lines every uStep.
+      float period = lv < 0.5 ? uTopBeats : uStep;
+      float k = gBeat / period;
+      m = floor(k);
+      ph = clamp((k - m) * period / uSnap, 0.0, 1.0);
+    }
     float from = splitAt(id, salt, m - 1.0, a0, a1, ext);
     float to = splitAt(id, salt, m, a0, a1, ext);
     float c = clamp(mix(from, to, snapEase(ph)), a0 + w, a1 - w);
@@ -200,9 +229,11 @@ vec3 scene(vec2 uv) {
     uv.x = abs(uv.x);
   }
 
-  if (uWarp > 0.0) {
+  // Warp: the seed's drift, plus the bass bending the grid on every note.
+  float bend = uWarp * uEnergy * (1.0 + uAudio * uLevel) + 0.8 * uCues * uBassEnv;
+  if (bend > 0.0) {
     float wph = TAU * uWarpCycles * uTime / uLoop;
-    float amt = 0.05 * uWarp * uEnergy * (1.0 + uAudio * uLevel);
+    float amt = 0.05 * bend;
     uv += amt * vec2(sin(uv.y * uWarpFreq + wph), sin(uv.x * uWarpFreq * 1.3 - wph));
   }
 
@@ -242,7 +273,7 @@ vec3 scene(vec2 uv) {
 
   // Leaf colour: paper, an accent, or the dark colour.
   vec4 hl = hash43(vec3(id * 1.37 + 0.5, uSeedSalt + n * 37.0 + 11.0, gEpoch));
-  float cyc = uCycleBeats > 0.0 ? floor(gBeat / uCycleBeats) : 0.0;
+  float cyc = (uCycleBeats > 0.0 ? floor(gBeat / uCycleBeats) : 0.0) + uCues * uWheel;
   vec3 col = uPaper;
   if (hl.x < uFill) {
     float idx = floor(hl.y * 3.0) + cyc;
@@ -263,7 +294,9 @@ vec3 scene(vec2 uv) {
   // Lines, anti-aliased to one screen pixel at this zoom.
   float aa = 2.0 / uRes.y / mag;
   float ink = 1.0 - smoothstep(-aa, aa, sd);
-  col = mix(col, uInk, ink);
+  // Snare: the black lines flash colour, Boogie-Woogie style.
+  vec3 lineCol = mix(uInk, accent(floor(hl.y * 3.0) + cyc + 2.0), 0.85 * uCues * uSnare);
+  col = mix(col, lineCol, ink);
 
   if (uGlow > 0.0) {
     float g = exp(-max(sd, 0.0) / (0.025 / mag + 1e-4));
@@ -278,8 +311,9 @@ void main() {
   vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * 2.0;
 
   gBeat = uTime * uBpm / 60.0;
-  gEpoch = floor(gBeat / (2.0 * uTopBeats));
-  gEnv = exp(-fract(gBeat) * 5.0);
+  gEpoch = uCues > 0.5 ? uRoll : floor(gBeat / (2.0 * uTopBeats));
+  float beatEnv = exp(-fract(gBeat) * 5.0);
+  gEnv = uCues > 0.5 ? max(uKick, 0.3 * beatEnv) : beatEnv;
   gLineK = 1.0 + 0.9 * uPump * uEnergy * gEnv + 0.4 * uAudio * uLevel;
   gDepth = uBuild > 0.5 ? min(uDepthMax, uDepthMin + floor(mod(gBeat, 4.0))) : uDepthMax;
   gHueA = TAU * uHueSpin * uTime / uLoop;
@@ -289,8 +323,9 @@ void main() {
   gZoomMag = pow(uWindow, gZoomFrac);
 
   vec3 col;
-  if (uAberr > 0.0) {
-    vec2 off = uv * uAberr * (1.0 + gEnv);
+  float aberr = uAberr * (1.0 + gEnv) + 0.01 * uCues * uSnare;
+  if (aberr > 0.0) {
+    vec2 off = uv * aberr;
     col = vec3(scene(uv + off).r, scene(uv).g, scene(uv - off).b);
   } else {
     col = scene(uv);
