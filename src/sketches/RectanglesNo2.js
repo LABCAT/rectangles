@@ -254,6 +254,7 @@ const sketch = (p) => {
   // Part B (bars 13–16) is another world: a hard cut to the rectangle
   // kaleidoscope, and back to the sky at bar 17.
   const KALEIDO_BARS = [13, 17];
+  const WINDOW_END_BAR = 13; // part A's windows are all open by here
   const neonSet = (h) =>
     [
       [h, 78, 100],
@@ -261,7 +262,7 @@ const sketch = (p) => {
       [h + 230, 85, 42],
       [h + 60, 68, 100],
     ].map(([hh, ss, bb]) => hsbToRgb(hh, ss, bb).map((c) => c / 255));
-  const paintBackground = (t, flash, sheet, punch, hitIndex) => {
+  const paintBackground = (t, flash, sheet, punch, hitIndex, reveal, windows, rimFlash, mel) => {
     const w = Math.max(2, Math.ceil(p.width / BG_SCALE));
     const h = Math.max(2, Math.ceil(p.height / BG_SCALE));
     if (!bgG || bgG.width !== w || bgG.height !== h) {
@@ -286,6 +287,14 @@ const sketch = (p) => {
     bgShader.setUniform('uFlash', flash);
     bgShader.setUniform('uPunch', punch);
     bgShader.setUniform('uDim', sheet);
+    bgShader.setUniform('uReveal', reveal);
+    bgShader.setUniform('uWindow', windows);
+    bgShader.setUniform('uRimFlash', rimFlash);
+    bgShader.setUniform('uMel', mel?.amt ?? 0);
+    bgShader.setUniform('uMelProg', mel?.prog ?? 0);
+    bgShader.setUniform('uMelShape', mel?.shape ?? 0.5);
+    bgShader.setUniform('uMelTilt', mel?.tilt ?? 0);
+    bgShader.setUniform('uMelCol', mel?.col ?? [1, 1, 1]);
     bgG.filter(bgShader);
   };
 
@@ -340,6 +349,10 @@ const sketch = (p) => {
         kicks: uniqueTicks(notesOf(tr[15]).filter((n) => n.midi === 36)),
         snares: uniqueTicks(notesOf(tr[15]).filter((n) => n.midi === 37 || n.midi === 38)),
         synth,
+        // Part A's windows: every BBeat kick and snare before bar WINDOW_END_BAR opens more.
+        reveal: notesOf(tr[15])
+          .filter((n) => n.t < (WINDOW_END_BAR - 1) * barSec)
+          .sort((a, b) => a.t - b.t),
         heroEnd: lastHero ? lastHero.t + Math.max(0.25, lastHero.dur) : Infinity,
         synthEnd: lastSynth ? lastSynth.t + lastSynth.dur : -Infinity,
       };
@@ -387,26 +400,46 @@ const sketch = (p) => {
   const BG_DIM_MIN = 0.05;
   const BG_FLASH_SEC = 0.22;
   // The last two parts (D, E): the melody slams (track 8) stand out — the
-  // background ducks by MELODY_DUCK under each slam, and the slams get a dark
-  // outline underneath. Elsewhere the quieter foreground (drum flyers,
+  // background ducks by MELODY_DUCK under each note, and the notes glow in the
+  // shader (melodyGlow). Elsewhere the quieter foreground (drum flyers,
   // corridor, torus) sits at FG_DIM.
   const MELODY_FOCUS_BAR = 21;
   const MELODY_DUCK = 0.45;
+  const MELODY_TILT = 0.2; // radians: the note rectangles lean this far, against the corridor
   const FG_DIM = 0.7;
-  // Melody cel tube, outside in: [stroke width × weight, colour gain, white?].
-  const MELODY_CEL = [
-    [2.2, 0.12, false], // ink outline
-    [1.6, 0.72, false], // shadow band
-    [1.0, 1, false], // lit core
-    [0.28, 1, true], // highlight
-  ];
+  // In focus each melody note is drawn in the background shader as a nest of
+  // glowing neon rectangles bursting from the centre (true glow, which
+  // strokes can't do). The note's pitch sets the rectangle's shape: low
+  // notes are tall slots, high notes wide letterboxes. Returns null off a note.
+  const melodyGlow = (t) => {
+    const n = focusNote(t);
+    if (!n) return null;
+    const prog = (t - n.t) / n.dur;
+    const filter = ev.melodyCC.length ? ccLerp(ev.melodyCC, t) : 1;
+    return {
+      amt: (1 - prog) ** 0.8 * (0.3 + 0.7 * filter),
+      prog,
+      col: hsbToRgb(melodyHue(look, n.midi), 85, 100).map((c) => c / 255),
+      shape: (n.midi % 12) / 11,
+      // Tilted against the corridor's roll, so the two cross over.
+      tilt: -(Math.sign(look.roll) || 1) * MELODY_TILT,
+    };
+  };
   const melodyFocus = (t) => t >= (MELODY_FOCUS_BAR - 1) * barSec;
+  // The note sounding in focus: the melody (track 8), which stops after bar
+  // 23, or else the hero lead (track 7), which carries the same theme on
+  // through part E.
+  const focusNote = (t) => {
+    if (!melodyFocus(t)) return null;
+    for (const track of [ev.melody, ev.hero]) {
+      const i = lastAt(track, t);
+      if (i >= 0 && t - track[i].t <= track[i].dur) return track[i];
+    }
+    return null;
+  };
   const melodyEnv = (t) => {
-    const i = lastAt(ev.melody, t);
-    if (i < 0) return 0;
-    const n = ev.melody[i];
-    const dt = t - n.t;
-    return dt <= n.dur ? Math.exp(-dt / Math.max(0.35, n.dur * 0.6)) : 0;
+    const n = focusNote(t);
+    return n ? Math.exp(-(t - n.t) / Math.max(0.35, n.dur * 0.6)) : 0;
   };
 
   // The bar-5 drop and the BBeat groove (track 15):
@@ -427,24 +460,67 @@ const sketch = (p) => {
     return i >= 0 ? t - events[i].t : Infinity;
   };
 
+  // Part A, the intro: the dark wall breaks open into windows. The screen is
+  // a wall of rectangles (functions/no2HyperTunnel.js); each BBeat hit pops
+  // more of them open (in a seeded random order, with a bounce) onto the
+  // full-bright sky, while the wall itself brightens with the filter. By bar
+  // WINDOW_END_BAR they're all open.
+  const WINDOW_POP_SEC = 0.16;
+  const RIM_FLASH_SEC = 0.12; // snare: rims go white, back to neon in about a quarter second
+  const IDLE_REVEAL = 0.22; // before play: a few windows already glow
+  // How much is open after hit i: it follows the hit's place in the part,
+  // curved (WINDOW_CURVE) so the wall opens slowly at first and the last
+  // windows only go on the final hit of the build.
+  const WINDOW_CURVE = 1.7;
+  const WALL_DIM = 0.78; // the wall stays this dark all through, so the build reads to the end
+  const openAfter = (i) => {
+    const H = ev.reveal;
+    if (i < 0) return 0;
+    const t0 = H[0].t - beatSec / 2;
+    return 1.04 * ((H[i].t - t0) / (H[H.length - 1].t - t0)) ** WINDOW_CURVE;
+  };
+  const revealAt = (t) => {
+    const H = ev.reveal;
+    if (!H.length) return 1.04;
+    const i = lastAt(H, t);
+    if (i < 0) return 0;
+    const k = 1 - (1 - clamp01((t - H[i].t) / WINDOW_POP_SEC)) ** 3;
+    const from = openAfter(i - 1);
+    return from + (openAfter(i) - from) * k;
+  };
+  // Waiting for the first play (not capturing, no ?t=): a living poster.
+  const isIdle = () => !p.captureInProgress && reel.t === null && !partStarted && !p.song?.isPlaying();
+
   const drawBackground = (t) => {
     const open = ev.fade13.length ? ccLerp(ev.fade13, t) : 1;
     const lit = clamp01((open - FILTER_DARK) / (1 - FILTER_DARK));
     let sheet = 1 - (1 - BG_DIM_MIN) * lit;
     // Outro: back to black over the bar after the last hero note.
     sheet = Math.max(sheet, clamp01((t - ev.heroEnd) / barSec));
-    if (melodyFocus(t)) sheet += (1 - sheet) * MELODY_DUCK * melodyEnv(t);
+    sheet += (1 - sheet) * MELODY_DUCK * melodyEnv(t);
     if (sheet >= 0.999) {
       p.background(0);
       return;
     }
     const i = lastAt(ev.bgHits, t);
+    const inWindows = t < (WINDOW_END_BAR - 1) * barSec;
+    // Snares: in part A they snap the window rims white (RIM_FLASH_SEC) and
+    // leave the background alone; after it they flare the background.
+    const snare = Math.exp(-since(ev.snares, t) / (inWindows ? RIM_FLASH_SEC : 0.15));
     const flash = Math.max(
       i >= 0 ? Math.exp(-(t - ev.bgHits[i].t) / BG_FLASH_SEC) : 0,
-      SNARE_FLARE * Math.exp(-since(ev.snares, t) / 0.15),
+      inWindows ? 0 : SNARE_FLARE * snare,
     );
     const punch = Math.exp(-since(ev.kicks, t) / PUNCH_SEC);
-    paintBackground(t, flash, sheet, punch, i);
+    let reveal = revealAt(t);
+    let bgT = t;
+    if (isIdle()) {
+      // The blobs drift and a few windows breathe while it waits.
+      const wall = performance.now() / 1000;
+      bgT = t + wall * 0.5;
+      if (inWindows) reveal = Math.max(reveal, IDLE_REVEAL + 0.04 * Math.sin(wall * 0.9));
+    }
+    paintBackground(bgT, flash, inWindows ? Math.max(sheet, WALL_DIM) : sheet, punch, i, reveal, inWindows ? 1 : 0, inWindows && !isIdle() ? snare : 0, melodyGlow(t));
     // The texture, unlit (lights come after), then clear the depth so the
     // tunnel draws over it.
     p.push();
@@ -503,7 +579,8 @@ const sketch = (p) => {
     const slams = activeSince(ev.melody, t, 4)
       .filter((g) => t - g.t <= g.dur)
       .slice(-8);
-    const focus = melodyFocus(t);
+    // In focus (the last two parts) the shader draws the notes (melodyGlow).
+    if (melodyFocus(t)) return;
     for (const g of slams) {
       const prog = (t - g.t) / g.dur;
       const c = hsbToRgb(melodyHue(look, g.midi), 90, 95);
@@ -512,25 +589,14 @@ const sketch = (p) => {
         const ease = 1 - Math.pow(1 - lp, 3);
         const grow = 0.66 + ease * 0.55 + L * 0.06;
         const a = Math.pow(1 - lp, 1.5) * (0.25 + 0.75 * filter) * (L ? 0.5 / L : 1);
-        const weight = (2 + 10 * filter + 8 * g.vel) * (1 - lp * 0.5) * (focus ? 1.6 : 1);
+        const weight = (2 + 10 * filter + 8 * g.vel) * (1 - lp * 0.5);
         const x0 = (-p.width * grow) / 2;
         const y0 = (-p.height * grow) / 2;
         p.push();
         p.noFill();
-        if (focus) {
-          // The last two parts: each slam is a cel-shaded tube — ink outline,
-          // a shadow band, the lit core, a soft highlight — so the theme pops.
-          for (const [wk, k, white] of MELODY_CEL) {
-            const col = white ? [255, 255, 255] : [c[0] * k, c[1] * k, c[2] * k];
-            p.stroke(col[0], col[1], col[2], 255 * a * (white ? 0.55 : 1));
-            p.strokeWeight(weight * wk);
-            p.rect(x0, y0, p.width * grow, p.height * grow);
-          }
-        } else {
-          p.stroke(c[0], c[1], c[2], 255 * a);
-          p.strokeWeight(weight);
-          p.rect(x0, y0, p.width * grow, p.height * grow);
-        }
+        p.stroke(c[0], c[1], c[2], 255 * a);
+        p.strokeWeight(weight);
+        p.rect(x0, y0, p.width * grow, p.height * grow);
         p.pop();
       }
     }
@@ -765,7 +831,7 @@ const sketch = (p) => {
     p.resetMatrix();
     p.noLights();
     p.blendMode(p.BLEND);
-    p.clear();
+    p.background(0);
     if (!ev) return;
 
     // Live: play on into the next part (parts sit back to back, so the audio
@@ -800,9 +866,11 @@ const sketch = (p) => {
 
     // Kick punch (and the bigger drop punch): the whole scene zooms in, springs back.
     const dropT = ev.kicks[0]?.t ?? Infinity;
-    const sinceDrop = t - dropT;
+    // Idle (waiting on the part's first frame): no drop flash or punch — that
+    // white flash frozen on screen was the grey screen.
+    const sinceDrop = isIdle() ? -1 : t - dropT;
     const punch =
-      PUNCH * Math.exp(-since(ev.kicks, t) / PUNCH_SEC) +
+      (isIdle() ? 0 : PUNCH * Math.exp(-since(ev.kicks, t) / PUNCH_SEC)) +
       (sinceDrop >= 0 ? DROP_PUNCH * Math.exp(-sinceDrop / (PUNCH_SEC * 2.5)) : 0);
     p.push();
     p.scale(1 + punch);
