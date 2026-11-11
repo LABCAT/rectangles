@@ -12,8 +12,9 @@ import { buildNo4Cues, no4CueUniforms } from '../lib/no4Cues.js';
 //
 // One shader (src/shaders/no4Mondrian.frag) and a seeded look
 // (src/lib/no4Look.js): black-line split-tree compositions in Mondrian's
-// primaries, pushed with beat-locked line moves, subdivision builds, colour
-// cycling, folds / kaleidoscope, portal zoom and warp.
+// primaries, pushed psychedelic but rectangles only: line moves, subdivision
+// builds, colour cycling and per-cell hues, mirror folds and mirrored tiles,
+// portal zoom and a per-axis stretch that keeps every line straight.
 //
 // Music: a copy of #RectanglesNo3's track and MIDI (112 BPM). The MIDI drives
 // the events (src/lib/no4Cues.js): guitar riffs re-roll the composition,

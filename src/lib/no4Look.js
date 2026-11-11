@@ -6,7 +6,7 @@
  * in src/shaders/no4Mondrian.frag; scalars can be overridden with `?uX=`.
  *
  * Structure first (ARA ledger §13): layout (flat / portal zoom), fold
- * (none / mirror / quad / kaleido), density, grid snap, line weight and
+ * (none / mirror / quad / mirrored tiles), density, grid snap, line weight and
  * light mode are either/or picks that read in 5 seconds; colour comes from a
  * seeded hue + harmony on its own salted stream, so palette changes never
  * reshuffle structure. Ranges are tight on purpose — every seed should land
@@ -15,7 +15,7 @@
  * The track is a copy of #RectanglesNo3's (112 BPM, 4/4, 28 bars). Motion
  * keys off `bpm` (the ?bpm= param, else NO4_DEFAULT_BPM = the track's). Beat-locked events (line moves, colour cycling,
  * subdivision builds) land on beats/bars of that tempo; `speed` scales only
- * the continuous motion (portal zoom, warp drift, kaleido spin).
+ * the continuous motion (portal zoom, stretch drift).
  */
 
 import { mulberry32, seedToInt, resolvePart } from './reelParams.js';
@@ -91,7 +91,9 @@ const LIGHTS = {
   neon: (h) => ({ paper: hsl(h + 230, 0.5, 0.035), ink: hsl(h + 180, 0.35, 0.9), dark: hsl(h + 260, 0.7, 0.14), glow: 0.9, accent: [1, 0.08] }),
 };
 
-const FOLDS = { 0: 'none', 2: 'mirror', 4: 'quad', 6: 'kaleido6', 8: 'kaleido8' };
+// Rectangles only: every fold keeps lines straight and axis-aligned.
+// 6 / 8 tile the frame 2×2 / 3×3 with mirrored copies.
+const FOLDS = { 0: 'none', 2: 'mirror', 4: 'quad', 6: 'tile2', 8: 'tile3' };
 
 /**
  * @param {string|number} seed
@@ -105,7 +107,7 @@ export const createNo4Look = (seed, { bpm = NO4_DEFAULT_BPM, beats = 16, speed =
   const quant = s.pick([0, 8, 12, 16]);
   const line = s.pick([0.012, 0.02, 0.03]);
   const fill = s.pick([0.3, 0.5, 0.75]);
-  let fold = s.pick([0, 0, 2, 4, 4, 6, 8]);
+  const fold = s.pick([0, 0, 2, 4, 4, 6, 8]);
   const portal = s.chance(0.5);
   const zoom = portal ? s.pick([0.5, 1]) : 0;
   const windowScale = s.pick([2, 2.5, 3]);
@@ -113,16 +115,16 @@ export const createNo4Look = (seed, { bpm = NO4_DEFAULT_BPM, beats = 16, speed =
   const centreAngle = s.random() * Math.PI * 2;
   let warp = s.pick([0, 0, 0.5, 1]);
   const warpFreq = s.pick([2, 3, 5]);
-  const spinDir = s.pick([-1, 1]);
-  const lozenge = s.chance(0.15);
+  s.random(); // was the kaleido spin direction (kept so later picks don't shift)
+  s.random(); // was the 45° lozenge (dropped: rectangles stay axis-aligned)
   const cycleBeats = s.pick([1, 2, 4, 0]);
-  const hueSpin = s.pick([0, 0, 1, 2]);
-  let rings = s.pick([0, 0, 0.3, 0.6]);
+  const hueSpin = s.pick([1, 1, 2, 3]);
+  let rings = s.pick([0, 0.3, 0.6, 0.6]);
   const step = s.pick([1, 2]);
   const topBeats = s.pick([4, 8]);
   const build = s.chance(0.5) ? 1 : 0;
   const pump = s.pick([0.4, 1]);
-  let aberr = s.pick([0, 0, 0.004, 0.008]);
+  let aberr = s.pick([0, 0.004, 0.008, 0.008]);
   const shade = s.pick([0, 0.12]);
 
   // Colour stream.
@@ -130,12 +132,17 @@ export const createNo4Look = (seed, { bpm = NO4_DEFAULT_BPM, beats = 16, speed =
   const classic = c.chance(0.4);
   const harmony = classic ? 'primary' : c.pick(Object.keys(HARMONIES));
   const hue = classic ? 0 : c.pick([...Array(12).keys()]) * 30;
-  const light = c.pick(['paper', 'paper', 'neon', 'neon', 'ink', 'tint']);
+  const light = c.pick(['neon', 'neon', 'ink', 'ink', 'tint', 'paper']);
+
+  // Psychedelic stream: each cell's accent hue is shifted by up to
+  // ±uSpread of a turn, so the grid shows many colours, not just three.
+  const ps = stream(seed, 0x50737963);
+  const spread = ps.pick([0.08, 0.16, 0.3]);
 
   // Density budget: stacking busy picks turns the frame to mush.
   let depthMax = depth[1];
-  const kaleido = fold >= 6;
-  const score = (depthMax >= 6) + kaleido + portal + (warp >= 1) + (rings >= 0.5) + (aberr > 0);
+  const tiled = fold >= 6;
+  const score = (depthMax >= 6) + tiled + portal + (warp >= 1) + (rings >= 0.5) + (aberr > 0);
   if (score >= 3) {
     depthMax = Math.min(depthMax, 5);
     rings = Math.min(rings, 0.3);
@@ -144,15 +151,14 @@ export const createNo4Look = (seed, { bpm = NO4_DEFAULT_BPM, beats = 16, speed =
     warp = Math.min(warp, 0.5);
     aberr = 0;
   }
-  // Kaleido already radiates; a portal centre off the fold axis breaks it.
-  const centre = offCentre && !kaleido ? 0.22 : 0;
-  if (kaleido && fold === 8 && portal) fold = 6;
+  // Mirrored tiles repeat the centre; an off-centre portal breaks the symmetry.
+  const centre = offCentre && !tiled ? 0.22 : 0;
 
   const lit = LIGHTS[light](hue);
   const [sat, lift] = lit.accent;
   const accents = HARMONIES[harmony].map((off, i) => hsl(hue + off, sat, ACCENT_L[i] + lift));
 
-  const framing = kaleido ? 'kaleido' : lozenge ? 'lozenge' : centre ? 'off-centre' : 'square';
+  const framing = tiled ? 'tiled' : centre ? 'off-centre' : 'square';
   const palette = classic ? (light === 'paper' ? 'mondrian' : `mondrian ${light}`) : `${HUE_NAMES[hue / 30]} ${harmony}`;
 
   return {
@@ -180,15 +186,14 @@ export const createNo4Look = (seed, { bpm = NO4_DEFAULT_BPM, beats = 16, speed =
       uFill: fill, // share of cells painted (the rest paper / dark)
       uDark: 0.08,
       uFold: fold,
-      uSpin: kaleido ? spinDir : 0, // whole turns per loop
-      uTilt: !kaleido && lozenge ? Math.PI / 4 : 0,
+      uSpread: spread, // per-cell hue shift, ± turns
       // Portal: the composition has a window holding the next composition,
       // zooming in uZoom × speed windows per bar (0 = flat).
       uZoom: zoom * speed,
       uWindow: windowScale,
       uCenterX: +(centre * Math.cos(centreAngle)).toFixed(4),
       uCenterY: +(centre * Math.sin(centreAngle)).toFixed(4),
-      uWarp: warp,
+      uWarp: warp, // per-axis stretch (lines stay straight)
       uWarpFreq: warpFreq,
       uWarpCycles: Math.max(1, Math.round(2 * speed)), // drift cycles per loop
       uCycleBeats: cycleBeats, // primaries rotate cell to cell every N beats (0 = off)
