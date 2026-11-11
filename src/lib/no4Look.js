@@ -12,31 +12,32 @@
  * reshuffle structure. Ranges are tight on purpose — every seed should land
  * somewhere good — and a density budget (ledger §1) caps busy combinations.
  *
- * Music-agnostic: everything keys off `bpm` (the ?bpm= param, else
- * NO4_DEFAULT_BPM). Beat-locked events (line moves, colour cycling,
+ * The track is a copy of #RectanglesNo3's (112 BPM, 4/4, 28 bars). Motion
+ * keys off `bpm` (the ?bpm= param, else NO4_DEFAULT_BPM = the track's). Beat-locked events (line moves, colour cycling,
  * subdivision builds) land on beats/bars of that tempo; `speed` scales only
  * the continuous motion (portal zoom, warp drift, kaleido spin).
  */
 
 import { mulberry32, seedToInt, resolvePart } from './reelParams.js';
 
-export const NO4_DEFAULT_BPM = 120;
+export const NO4_DEFAULT_BPM = 112;
 
 /**
- * PROVISIONAL parts — bar ranges at the param BPM (4/4, bar 1 starts at t = 0).
- * Not cut to any music: the placeholder audio is a stand-in until the new
- * Reason track lands, then re-cut these to its phrases (and its bpm).
- * At 120 bpm: a 0–8s, b 8–24s, c 24–40s, d 40–52s.
- * `energy` scales the beat pump / warp so the sections differ a little.
+ * Parts: the track's seven 4-bar phrases (the same cuts as #RectanglesNo3's
+ * NO3_PARTS), bar 1 at t = 0. At 112 bpm a part is 8.57s.
+ * `energy` scales the beat pump / warp so the sections differ.
  */
 export const NO4_PARTS = {
-  a: { bars: [1, 4], energy: 0.6 },
-  b: { bars: [5, 12], energy: 0.8 },
-  c: { bars: [13, 20], energy: 1 },
-  d: { bars: [21, 26], energy: 0.7 },
+  a: { bars: [1, 4], name: 'Riffs', energy: 0.6 },
+  b: { bars: [5, 8], name: 'Clavinet', energy: 0.7 },
+  c: { bars: [9, 12], name: 'Bass', energy: 0.8 },
+  d: { bars: [13, 16], name: 'Bounce', energy: 0.9 },
+  e: { bars: [17, 20], name: 'Drums', energy: 1 },
+  f: { bars: [21, 24], name: 'Wheeler', energy: 1 },
+  g: { bars: [25, 28], name: 'Finale', energy: 0.8 },
 };
 
-/** Section energy at time `t` (seconds) — the provisional part it falls in. */
+/** Section energy at time `t` (seconds) — the part it falls in. */
 export const no4Energy = (t, bpm = NO4_DEFAULT_BPM) => {
   for (const id of Object.keys(NO4_PARTS)) {
     const range = resolvePart(NO4_PARTS, id, { bpm });

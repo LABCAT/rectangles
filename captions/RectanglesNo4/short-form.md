@@ -1,4 +1,4 @@
-<!-- DRAFT — pending music. Placeholder audio; the new Reason track is not chosen yet. Founder caption interview still owed (social-media-captions) and the Mondrian quote needs a source check. Not mirrored into README.md until approved. Strip this comment before posting. -->
+<!-- DRAFT — music: a copy of #RectanglesNo3's track. Founder caption interview still owed (social-media-captions) and the Mondrian quote needs a source check. Not mirrored into README.md until approved. Strip this comment before posting. -->
 
 🟥 Primary colours start to trip. 🟦
 

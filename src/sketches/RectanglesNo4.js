@@ -15,11 +15,11 @@ import { createNo4Look, describeNo4, no4Energy, no4PhraseSeed, NO4_DEFAULT_BPM, 
 // cycling, folds / kaleidoscope, portal zoom and warp.
 //
 // Music-agnostic: the clock is seconds and every beat / bar comes from the
-// ?bpm= param (default NO4_DEFAULT_BPM). The audio is a PLACEHOLDER and only
-// feeds a small generic level; no MIDI cues are wired yet.
+// ?bpm= param (default NO4_DEFAULT_BPM, 112). The audio is a copy of
+// #RectanglesNo3's track; it feeds a small generic level, no MIDI cues yet.
 //
-//   ?seed=  look, reproducible           ?part=  a / b / c / d (provisional) to capture
-//   ?bpm=   motion tempo (default 120)   ?beats= loop length in beats (default 16)
+//   ?seed=  look, reproducible           ?part=  a–g, the track's 4-bar phrases
+//   ?bpm=   motion tempo (default 112)   ?beats= loop length in beats (default 16)
 //   ?speed= continuous motion speed      ?t=     freeze at a time in seconds (stills)
 //   ?auto=  1/0 new look every 8-bar phrase (default on unless ?seed is given)
 //   ?uX=    override any scalar uniform, e.g. ?uFold=6
@@ -37,11 +37,10 @@ const midiUrl = base + 'audio/RectanglesNo4.mid';
 
 const PHRASE_BARS = 8;
 
-// TODO(music): cues when the new Reason track lands. The placeholder MIDI is
-// not wired on purpose. Once the founder picks a track, map its MIDI tracks
+// TODO(music): MIDI cues. public/audio/RectanglesNo4.mid is still the old
+// placeholder's, not the No3 track's. With the matching MIDI, map its tracks
 // here (index → handler) and schedule them with p.scheduleCueSet in setup —
-// e.g. a lead that kicks line moves, drums that fire the beat pump — and
-// re-cut NO4_PARTS (src/lib/no4Look.js) to its phrases and tempo.
+// e.g. the guitar kicks line moves, drums fire the beat pump.
 // eslint-disable-next-line no-unused-vars
 const MUSIC_CUES = [
   // { track: 0, handler: 'onLeadCue', poly: false },
@@ -185,7 +184,7 @@ const sketch = (p) => {
     await p.loadSong(audioUrl, midiUrl);
     // Clamp the part to the loaded song.
     applyPart(p, NO4_PARTS, reel.part, { bpm });
-    // TODO(music): schedule MUSIC_CUES here once the new track's MIDI lands.
+    // TODO(music): schedule MUSIC_CUES here once the matching MIDI is in.
   };
 
   p.draw = () => {
