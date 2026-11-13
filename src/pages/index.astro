@@ -1,18 +1,14 @@
 ---
 import BaseLayout from '@labcat2020/animation-lab/layouts/BaseLayout.astro';
+import SiteHeader from '@labcat2020/animation-lab/components/SiteHeader.astro';
+import SeriesHome from '@labcat2020/animation-lab/components/SeriesHome.astro';
 import { getAllSketches } from '@/sketchMetadata.js';
 
 const sketches = getAllSketches();
+const tagline = "Mondrian's grid, set loose in orbit. Audio-reactive rectangle animations.";
 ---
 
-<BaseLayout title="LABCATS Sketchbook" description="Creative Coding Experiments.">
-  <h1>LABCATS Sketchbook</h1>
-  <p>Creative Coding Experiments.</p>
-
-  <h2>Available Sketches</h2>
-  <ul>
-    {sketches.map(sketch => (
-      <li><a href={`/${sketch.id}`}>{sketch.title}</a></li>
-    ))}
-  </ul>
+<BaseLayout title="Rectangles | LABCAT Animations" description="Rectangles: audio-reactive rectangle animations by LABCAT.">
+  <SiteHeader slot="header" collapsible={false} />
+  <SeriesHome name="Rectangles" tagline={tagline} sketches={sketches} accentA="#0cdbf5" accentB="#ff0cb8" />
 </BaseLayout>

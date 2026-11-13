@@ -12,8 +12,8 @@ importers:
   .:
     dependencies:
       '@labcat2020/animation-lab':
-        specifier: 0.2.3
-        version: 0.2.3(astro@6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3))(sass-embedded@1.98.0)
+        specifier: 0.4.0
+        version: 0.4.0(astro@6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3))(sass-embedded@1.98.0)
       '@labcat2020/p5.audioreactive':
         specifier: ^0.2.0
         version: 0.2.0(p5@2.2.3)
@@ -469,8 +469,8 @@ packages:
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
-  '@labcat2020/animation-lab@0.2.3':
-    resolution: {integrity: sha512-fWFvR3dR0VoFHJaSGCoNCdshbYLSUSk6BytmhlkYJ717wJmEwx6pt2ML5MU0zDwn0sHnPaxmniRKx9ul0BqFxw==}
+  '@labcat2020/animation-lab@0.4.0':
+    resolution: {integrity: sha512-XJRZoG58uUQMnadekohhvJvWXUDVmDorQkl3c9qYfh8wEOoSztV7HVCFpOxum41bhdqsApdSqpbaeHwX40v4Ow==}
     hasBin: true
     peerDependencies:
       astro: ^6.0.8
@@ -2849,7 +2849,7 @@ snapshots:
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
-  '@labcat2020/animation-lab@0.2.3(astro@6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3))(sass-embedded@1.98.0)':
+  '@labcat2020/animation-lab@0.4.0(astro@6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3))(sass-embedded@1.98.0)':
     dependencies:
       '@labcat2020/rocketship': 0.1.0
       astro: 6.0.8(rollup@4.59.1)(sass-embedded@1.98.0)(sass@1.98.0)(typescript@5.9.3)
